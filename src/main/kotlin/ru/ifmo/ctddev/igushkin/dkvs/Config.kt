@@ -31,10 +31,10 @@ public data class Config(val addresses: Map<Int, String>,
         get() = addresses.size()
 }
 
-val globalConfig by Delegates.lazy { readConfig() }
+val globalConfig by Delegates.lazy { readDkvsProperties() }
 val CHARSET = "UTF-8"
 
-public fun readConfig(): Config {
+public fun readDkvsProperties(): Config {
 
     val CONFIG_PROPERTIES_NAME = "dkvs.properties"
     val NODE_ADDRESS_PREFIX = "node"
