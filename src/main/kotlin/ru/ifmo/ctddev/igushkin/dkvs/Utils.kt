@@ -21,3 +21,5 @@ fun joined(items: Collection<Any>, separator: String = ", "): String = StringBui
         append(i)
     }
 }.toString()
+
+fun <T> Array<T>.get(range: IntRange) = this.copyOfRange(range.start, range.end + 1)

@@ -15,8 +15,14 @@ public class Replica(val id: Int,
                      val send: (Int, Message) -> Unit,
                      val leaderIds: List<Int>
 ) {
+    //todo read saved state
+
     public volatile var slotIn: Int = 0; private set
     public volatile var slotOut: Int = 0; private set
+
+    private val requests = setOf<ClientRequest>()
+    private val proposals = setOf<ClientRequest>()
+    private val decisions = setOf<ClientRequest>()
 
     /**
      * Should be called from the replica's container to pass to the replica each message
@@ -28,3 +34,4 @@ public class Replica(val id: Int,
     }
 }
 
+public data class Proposal(val slot: Int, val command: ClientRequest)
