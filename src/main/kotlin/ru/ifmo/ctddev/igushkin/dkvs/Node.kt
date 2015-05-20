@@ -32,17 +32,17 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         }
     }
 
-    private val inSocket = ServerSocket(globalConfig.port(id))
+    private val serverSocket = ServerSocket(globalConfig.port(id))
 
     private volatile var started = false
     private volatile var stopping = false
 
-    private val sender = { to: Int, m: Message -> send(to, m)}
+    private val sender = { to: Int, m: Message -> send(to, m) }
     private val localReplica = Replica(id, sender, globalConfig.ids)
 
     override public fun run() {
         if (started)
-            throw IllegalStateException("Cannot start a node which has already been started")
+            throw IllegalStateException("Cannot start a node which has already been started.")
 
         started = true
 
@@ -57,7 +57,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         thread {
             while (!stopping)
                 try {
-                    val client = inSocket.accept()
+                    val client = serverSocket.accept()
                     thread { handleRequest(client) }
                 } catch (ignored: SocketException) {
                 }
@@ -66,11 +66,11 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
     override fun close() {
         stopping = true
-        inSocket.close()
+        serverSocket.close()
         for (n in neighbors) {
             with(n) {
-                if (input != null) input!!.close()
-                if (output != null) output!!.close()
+                input?.close()
+                output?.close()
             }
         }
     }
@@ -81,44 +81,89 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     }
 
     private val neighbors = Array(globalConfig.nodesCount) { NeighborEntry() }
+    private val clients = sortedMapOf<Int, NeighborEntry>()
 
     private fun send(to: Int, message: Message) {
-        neighbors[to].messages.addLast(message)
+        if (to == id)
+            eventQueue.offer(message)
+        else
+            neighbors[to].messages.offer(message)
     }
 
+    /**
+     * Executed in new thread, it decides what kind of connection [client] belongs to
+     * and switches to [listenToNode] or [listenToClient]
+     */
     private fun handleRequest(client: Socket) {
         val reader = client.getInputStream().reader(CHARSET).buffered()
         reader.use {
             dispatch(it) { parts ->
                 when (parts[0]) {
-                    "node" -> listenToNode(client, parts[1].toInt())
-                    "get"  ->
+                    "node"                 -> {
+                        val nodeId = parts[1].toInt()
+                        with (neighbors[nodeId]) {
+                            input?.close()
+                            input = client
+                        }
+                        listenToNode(reader, nodeId)
+                    }
+                    "get", "set", "delete" -> {
+                        val newClientId = (clients.keySet().max() ?: 0) + 1
+                        clients[newClientId] = NeighborEntry(client)
+
+                        // since we've already read a message, we have to handle it on the spot
+                        val firstMessage = ClientRequest.parse(newClientId, parts)
+                        eventQueue.offer(firstMessage)
+
+                        thread { speakToClient(newClientId) }
+                        listenToClient(reader, newClientId)
+                    }
                 }
             }
         }
     }
 
+    /**
+     * Executed in main thread, it takes received messages one by one from
+     * [eventQueue] and handles them or forwards them to the proper receivers.
+     */
     private fun handleMessages() {
         forever {
-            val m = incomingMessages.poll()
+            val m = eventQueue.poll()
             when (m) {
                 is ReplicaMessage -> localReplica.receiveMessage(m)
             }
         }
     }
 
-    val incomingMessages = LinkedBlockingDeque<Message>()
+    /**
+     * Messages from this queue are polled and handled by handleMessages.
+     * Every communication thread puts its received messages into the queue.
+     */
+    val eventQueue = LinkedBlockingDeque<Message>()
 
-    private fun listenToNode(client: Socket, nodeId: Int) {
-        with (neighbors[nodeId]) {
-            input?.close()
-            input = client
-        }
-        val reader = client.getInputStream().reader(CHARSET).buffered()
-        log("Started listening to node.$nodeId from ${client.getInetAddress()}")
+    /**
+     * Executed in a communication thread, it puts all the messages received from
+     * another nodes into [eventQueue].
+     */
+    private fun listenToNode(reader: BufferedReader, nodeId: Int) {
+        log("Started listening to node.$nodeId.")
         dispatch(reader) { parts ->
             val message = Message.parse(parts)
-            incomingMessages.offer(message)
+            eventQueue.offer(message)
+        }
+    }
+
+    /**
+     * Executed in a communication thread, it puts all the messages received from
+     * a client into [eventQueue].
+     */
+    private fun listenToClient(reader: BufferedReader, clientId: Int) {
+        log("Client $clientId connected.")
+        dispatch(reader) { parts ->
+            val message = ClientRequest.parse(clientId, parts)
+            log("Message from $clientId: ${joined(parts.asList(), " ")}")
+            localReplica.receiveMessage(message)
         }
     }
 
@@ -154,6 +199,22 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
             } catch (e: SocketException) {
                 logErr("Connection to node.$nodeId lost.", e)
+            }
+        }
+    }
+
+    private fun speakToClient(clientId: Int) {
+        val entry = clients[clientId]!!
+        val queue = entry.messages
+        val writer = entry.input!!.getOutputStream().writer()
+        forever {
+            val m = queue.poll()
+            try {
+                log("Sending to client $clientId: $m")
+                writer write "$m\n"
+            } catch (ioe: IOException) {
+                logErr("Couldn't send a message. Retrying.")
+                neighbors[clientId].messages.addFirst(m)
             }
         }
     }
