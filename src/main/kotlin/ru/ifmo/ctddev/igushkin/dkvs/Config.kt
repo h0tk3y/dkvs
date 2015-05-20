@@ -29,6 +29,9 @@ public data class Config(val addresses: Map<Int, String>,
 
     public val nodesCount: Int
         get() = addresses.size()
+
+    public val ids: List<Int>
+        get() = (0..nodesCount-1).toList()
 }
 
 val globalConfig by Delegates.lazy { readDkvsProperties() }

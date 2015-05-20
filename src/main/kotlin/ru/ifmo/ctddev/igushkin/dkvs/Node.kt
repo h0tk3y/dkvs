@@ -37,6 +37,9 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private volatile var started = false
     private volatile var stopping = false
 
+    private val sender = { to: Int, m: Message -> send(to, m)}
+    private val localReplica = Replica(id, sender, globalConfig.ids)
+
     override public fun run() {
         if (started)
             throw IllegalStateException("Cannot start a node which has already been started")
@@ -46,6 +49,10 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         for (i in 1..globalConfig.nodesCount)
             if (i != id)
                 thread { speakToNode(id) }
+
+        thread {
+            handleMessages()
+        }
 
         thread {
             while (!stopping)
@@ -61,8 +68,10 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         stopping = true
         inSocket.close()
         for (n in neighbors) {
-            if (n.input != null) n.input!!.close()
-            if (n.output != null) n.output!!.close()
+            with(n) {
+                if (input != null) input!!.close()
+                if (output != null) output!!.close()
+            }
         }
     }
 
@@ -73,28 +82,43 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
     private val neighbors = Array(globalConfig.nodesCount) { NeighborEntry() }
 
+    private fun send(to: Int, message: Message) {
+        neighbors[to].messages.addLast(message)
+    }
+
     private fun handleRequest(client: Socket) {
         val reader = client.getInputStream().reader(CHARSET).buffered()
         reader.use {
             dispatch(it) { parts ->
                 when (parts[0]) {
                     "node" -> listenToNode(client, parts[1].toInt())
-                    "get"  -> {
-                    }
+                    "get"  ->
                 }
             }
         }
     }
 
-    private fun send(to: Int, message: Message) {
-        neighbors[to].messages.addLast(message)
+    private fun handleMessages() {
+        forever {
+            val m = incomingMessages.poll()
+            when (m) {
+                is ReplicaMessage -> localReplica.receiveMessage(m)
+            }
+        }
     }
 
+    val incomingMessages = LinkedBlockingDeque<Message>()
+
     private fun listenToNode(client: Socket, nodeId: Int) {
+        with (neighbors[nodeId]) {
+            input?.close()
+            input = client
+        }
         val reader = client.getInputStream().reader(CHARSET).buffered()
         log("Started listening to node.$nodeId from ${client.getInetAddress()}")
         dispatch(reader) { parts ->
-
+            val message = Message.parse(parts)
+            incomingMessages.offer(message)
         }
     }
 
@@ -120,8 +144,10 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
                 forever {
                     val m = neighbors[nodeId].messages.pollFirst()
                     try {
+                        log("Sending to $nodeId: $m")
                         writer.write("$m\n")
                     } catch (ioe: IOException) {
+                        logErr("Couldn't send a message. Retrying.")
                         neighbors[nodeId].messages.addFirst(m)
                     }
                 }
