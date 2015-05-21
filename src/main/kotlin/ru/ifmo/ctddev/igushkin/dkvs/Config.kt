@@ -31,7 +31,7 @@ public data class Config(val addresses: Map<Int, String>,
         get() = addresses.size()
 
     public val ids: List<Int>
-        get() = (0..nodesCount-1).toList()
+        get() = (1..nodesCount).toList()
 }
 
 val globalConfig by Delegates.lazy { readDkvsProperties() }

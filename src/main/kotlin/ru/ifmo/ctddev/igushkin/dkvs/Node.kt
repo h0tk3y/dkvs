@@ -12,6 +12,8 @@ import kotlin.concurrent.thread
 
 /**
  * @param id Node identifier which should be unique across the system instance.
+ *
+ * A node contains one [Replica], one [Leader] and one [Acceptor] in itself.
  */
 public class Node(val id: Int) : Runnable, AutoCloseable {
 
@@ -38,7 +40,11 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private volatile var stopping = false
 
     private val sender = { to: Int, m: Message -> send(to, m) }
-    private val localReplica = Replica(id, sender, globalConfig.ids)
+    private val allIds = globalConfig.ids
+
+    private val localReplica = Replica(id, sender, allIds)
+    private val localLeader = Leader(id, sender, allIds, allIds)
+    private val localAcceptor = Acceptor(id, sender)
 
     override public fun run() {
         if (started)
@@ -48,6 +54,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
         for (i in 1..globalConfig.nodesCount)
             if (i != id)
+                /** Spawn communication thread. */
                 thread { speakToNode(id) }
 
         thread {
@@ -58,6 +65,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
             while (!stopping)
                 try {
                     val client = serverSocket.accept()
+                    /** Spawn communication thread. */
                     thread { handleRequest(client) }
                 } catch (ignored: SocketException) {
                 }
@@ -67,7 +75,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     override fun close() {
         stopping = true
         serverSocket.close()
-        for (n in neighbors) {
+        for (n in neighbors + clients.values()) {
             with(n) {
                 input?.close()
                 output?.close()
@@ -111,10 +119,12 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
                         val newClientId = (clients.keySet().max() ?: 0) + 1
                         clients[newClientId] = NeighborEntry(client)
 
-                        // since we've already read a message, we have to handle it on the spot
+                        // Since we've already read a message, we have to handle it on the spot
+                        // refactor Try to improve may be?
                         val firstMessage = ClientRequest.parse(newClientId, parts)
                         eventQueue.offer(firstMessage)
 
+                        /** Spawn communication thread. */
                         thread { speakToClient(newClientId) }
                         listenToClient(reader, newClientId)
                     }
@@ -125,19 +135,22 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
     /**
      * Executed in main thread, it takes received messages one by one from
-     * [eventQueue] and handles them or forwards them to the proper receivers.
+     * [eventQueue] and handles them by forwarding them to the proper receivers.
      */
     private fun handleMessages() {
         forever {
             val m = eventQueue.poll()
             when (m) {
-                is ReplicaMessage -> localReplica.receiveMessage(m)
+                is ReplicaMessage  -> localReplica.receiveMessage(m)
+                is LeaderMessage   -> localLeader.receiveMessage(m)
+                is AcceptorMessage -> localAcceptor.receiveMessage(m)
             }
         }
     }
 
     /**
      * Messages from this queue are polled and handled by handleMessages.
+     *
      * Every communication thread puts its received messages into the queue.
      */
     val eventQueue = LinkedBlockingDeque<Message>()
@@ -162,7 +175,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         log("Client $clientId connected.")
         dispatch(reader) { parts ->
             val message = ClientRequest.parse(clientId, parts)
-            log("Message from $clientId: ${joined(parts.asList(), " ")}")
+            log("Message from $clientId: ${parts.join(" ")}")
             localReplica.receiveMessage(message)
         }
     }

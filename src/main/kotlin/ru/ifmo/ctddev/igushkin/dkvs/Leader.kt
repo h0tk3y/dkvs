@@ -11,6 +11,10 @@ public class Leader(val id: Int,
 ) {
     public volatile var active: Boolean = false; private set
     public volatile var ballot: Ballot = Ballot(-1, id); private set
+
+    public fun receiveMessage(message: LeaderMessage) {
+
+    }
 }
 
 public data class Ballot(val ballotNum: Int, val leaderId: Int): Comparable<Ballot> {

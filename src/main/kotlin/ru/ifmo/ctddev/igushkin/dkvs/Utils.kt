@@ -14,12 +14,4 @@ fun forever(f: () -> Unit) {
     while (true) f()
 }
 
-fun joined(items: Collection<Any>, separator: String = ", "): String = StringBuilder {
-    append(items.first())
-    for (i in items.drop(1)) {
-        append(separator)
-        append(i)
-    }
-}.toString()
-
 fun <T> Array<T>.get(range: IntRange) = this.copyOfRange(range.start, range.end + 1)

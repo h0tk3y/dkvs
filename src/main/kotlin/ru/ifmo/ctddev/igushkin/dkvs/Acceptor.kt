@@ -5,25 +5,35 @@ package ru.ifmo.ctddev.igushkin.dkvs
  */
 
 public class Acceptor(val id: Int,
-                      val send: (Int, Message) -> Unit
+                      val send: (leaderId: Int, Message) -> Unit
 ) {
     private volatile var ballotNumber = -1
-    private val accepted = setOf<AcceptProposal>()
+
+    /** Slot -> most recent AcceptProposal */
+    private val accepted = hashMapOf<Int, AcceptProposal>()
 
     public fun receiveMessage(message: AcceptorMessage) {
         when (message) {
             is PhaseOneRequest -> {
                 if (message.ballotNum > ballotNumber)
                     ballotNumber = message.ballotNum
-                //todo response
+                send(message.fromId, PhaseOneResponse(id, ballotNumber, accepted.values()))
             }
             is PhaseTwoRequest -> {
-
+                if (message.ballotNum == ballotNumber)
+                    accepted[message.payload.slot] = message.payload
+                send(message.fromId, PhaseTwoResponse(id, ballotNumber))
             }
         }
     }
 }
 
+/**
+ * Represents pvalue <b, s, c> of Multi-Paxos protocol.
+ *
+ * See [Paxos Made Moderately Complex]
+ * [http://www.cs.cornell.edu/courses/cs7412/2011sp/paxos.pdf]
+ */
 public data class AcceptProposal(val ballotNum: Int, val slot: Int, val command: ClientRequest) {
     override fun toString(): String = "$ballotNum $slot $command"
 
