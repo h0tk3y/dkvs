@@ -1,5 +1,6 @@
 package ru.ifmo.ctddev.igushkin.dkvs
 
+import java.io.FileWriter
 import java.util.HashMap
 
 /**
@@ -12,7 +13,7 @@ import java.util.HashMap
  * @param send (nodeId, message) Way to send messages to the other nodes.
  * @param leaderIds List of ids which the replica will ask for decisions.
  *
- * @property state Replica state. Paxos support any abstract state, but
+ * @property state Replica state. Paxos supports any abstract state, but
  * in DKVS the state is a key-value string map.
  *
  * @property slotIn Next slot to propose a request to.
@@ -20,23 +21,68 @@ import java.util.HashMap
  */
 
 public class Replica(val id: Int,
-                     val send: (Int, Message) -> Unit,
+                     val send: (nodeId: Int, Message) -> Unit,
+                     val sendToClient: (clientId: Int, text: String) -> Unit,
                      val leaderIds: List<Int>
 ) {
 
-    public val state: Map<String, String> = HashMap()
+    private val persistenceFileName = "dkvs_$id.log"
+    private val diskPersistence = FileWriter(persistenceFileName, true).buffered()
+
+    private fun saveToDisk(data: Any) {
+        synchronized(diskPersistence) {
+            with(diskPersistence) {
+                write(data.toString())
+                newLine()
+                flush()
+            }
+        }
+    }
+
+    private val state: MutableMap<String, String> = HashMap()
     //todo read saved state on initialization
 
     public volatile var slotIn: Int = 0; private set
     public volatile var slotOut: Int = 0; private set
+
+    private val performed = hashSetOf<ClientRequest>()
 
     private val requests = hashSetOf<ClientRequest>()
     private val proposals = hashMapOf<Int, ClientRequest>()
     private val decisions = hashMapOf<Int, ClientRequest>()
 
     private fun perform(c: ClientRequest) {
-        ++slotOut
-        //todo
+        if (c in performed)
+            return
+        when (c) {
+            is GetRequest    -> {
+                sendToClient(c.fromId,
+                             if (c.key in state)
+                                 "VALUE ${c.key} ${state[c.key]}" else
+                                 "NOT_FOUND")
+            }
+            is SetRequest    -> {
+                state[c.key] = c.value
+                sendToClient(c.fromId, "STORED")
+            }
+            is DeleteRequest -> {
+                val result = (state remove c.key) != null
+                sendToClient(c.fromId, if (result) "DELETED" else "NOT_FOUND")
+            }
+        }
+        performed add c
+    }
+
+    private fun propose() {
+        while (requests.isNotEmpty()) {
+            val c = requests.first()
+            if (slotIn !in decisions) {
+                requests remove c
+                proposals[slotIn] = c
+                leaderIds.forEach { send(it, ProposeMessage(id, slotIn, c)) }
+            }
+            ++slotIn
+        }
     }
 
     /**
@@ -45,9 +91,8 @@ public class Replica(val id: Int,
      * @param message Message that should be handled by the replica.
      */
     public fun receiveMessage(message: ReplicaMessage) {
-        //todo propose requests
         when (message) {
-            is ClientRequest -> {
+            is ClientRequest   -> {
                 requests add message
             }
             is DecisionMessage -> {
@@ -64,11 +109,12 @@ public class Replica(val id: Int,
                         }
                     }
                     perform(cmd)
+                    ++slotOut
                 }
             }
         }
+        propose()
     }
-
 }
 
 public data class Proposal(val slot: Int, val command: ClientRequest)

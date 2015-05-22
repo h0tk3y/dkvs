@@ -1,6 +1,8 @@
 package ru.ifmo.ctddev.igushkin.dkvs
 
 import java.util.HashSet
+import java.util.LinkedHashMap
+import java.util.LinkedHashSet
 
 /**
  * Messages between [Node]s and Clients.
@@ -10,6 +12,8 @@ import java.util.HashSet
  */
 public abstract class Message() {
     companion object {
+        public fun parse(s: String): Message = parse(s.split(' '))
+
         public fun parse(parts: Array<String>): Message =
                 when (parts[0]) {
                     "node" -> NodeMessage(parts[1].toInt())
@@ -18,8 +22,10 @@ public abstract class Message() {
 
                     "decision" -> DecisionMessage(parts[1].toInt(), ClientRequest.parse(-1, parts[2..parts.lastIndex]))
 
+                    "propose" -> ProposeMessage(parts[1].toInt(), parts[2].toInt(), ClientRequest.parse(-1, parts[3..parts.lastIndex]))
+
                     "p1a" -> PhaseOneRequest(parts[1].toInt(), parts[2].toInt())
-                    "p2a" -> PhaseTwoRequest(parts[1].toInt(), parts[2].toInt(), AcceptProposal.parse(parts[3..parts.lastIndex]))
+                    "p2a" -> PhaseTwoRequest(parts[1].toInt(), AcceptProposal.parse(parts[2..parts.lastIndex]))
 
                     "p1b" -> PhaseOneResponse.parse(parts)
                     "p2b" -> PhaseTwoResponse(parts[1].toInt(), parts[2].toInt())
@@ -80,24 +86,31 @@ public abstract class ClientRequest(clientId: Int): ReplicaMessage(clientId) {
                     "get" -> GetRequest(clientId, parts[1])
                     "set" -> SetRequest(clientId, parts[1], parts.drop(2).join(" "))
                     "delete" -> DeleteRequest(clientId, parts[1])
+                    "ping" -> PingRequest(clientId)
                     else -> throw IllegalArgumentException("Invalid client request ${parts[0]}.")
                 }
     }
 }
 
-public class GetRequest(fromId: Int, val key: String): ClientRequest(fromId) {
+public data class GetRequest(fromId: Int, val key: String): ClientRequest(fromId) {
     override fun toString() = "get $key"
 }
-public class SetRequest(fromId: Int, val key: String, val value: String): ClientRequest(fromId) {
+public data class SetRequest(fromId: Int, val key: String, val value: String): ClientRequest(fromId) {
     override fun toString() = "set $key $value"
 }
-public class DeleteRequest(fromId: Int, val key: String): ClientRequest(fromId) {
+public data class DeleteRequest(fromId: Int, val key: String): ClientRequest(fromId) {
     override fun toString() = "delete $key"
 }
+//refactor Join with [PingMessage] may be?
+public data class PingRequest(fromId: Int): ClientRequest(fromId)
 
 //----- Leader messages -----
 
 public abstract class LeaderMessage(val fromId: Int): Message()
+
+public class ProposeMessage(fromId: Int, val slotIn: Int, val request: ClientRequest): LeaderMessage(fromId) {
+    override fun toString() = "propose $fromId $slotIn $request"
+}
 
 /**
  * Sent to [Scout] from [Acceptor] in response to [PhaseOneRequest].
@@ -109,12 +122,12 @@ public class PhaseOneResponse(fromId: Int, val ballotNum: Int, val pvalues: Coll
         if (parts[0] != "p1b") throw IllegalArgumentException("PhaseOneResponse should start by \"p1b\"")
         val fromId = parts[1].toInt()
         val ballotNum = parts[2].toInt()
-        val pvalues = parts[3..parts.lastIndex].join(" ").split("\\s+$payloadSplitter\\s+") map {it.split(' ')} map { AcceptProposal.parse(it) }
-        return PhaseOneResponse(fromId, ballotNum, HashSet(pvalues))
+        val pvalues = parts[3..parts.lastIndex].join(" ").split("$payloadSplitter") map {it.split(' ')} map { AcceptProposal.parse(it) }
+        return PhaseOneResponse(fromId, ballotNum, LinkedHashSet(pvalues))
     }}
 }
 
-val payloadSplitter = "###"
+val payloadSplitter = " _#_ "
 
 /**
  * Sent to [Scout] from [Acceptor] in response to [PhaseTwoRequest].
@@ -142,6 +155,14 @@ public class PhaseOneRequest(fromId: Int, ballotNum: Int): AcceptorMessage(fromI
  * Sent by active [Leader] to [Acceptor].
  * Normal response is [PhaseTwoResponse].
  */
-public class PhaseTwoRequest(fromId: Int, ballotNum: Int, val payload: AcceptProposal): AcceptorMessage(fromId, ballotNum) {
+public class PhaseTwoRequest(fromId: Int, val payload: AcceptProposal): AcceptorMessage(fromId, payload.ballotNum) {
     override fun toString() = "p2a $fromId $payload"
+}
+
+/**
+ * Never received by [Node]s.
+ * The only usage is for sending responses to the Clients.s
+ */
+public class TextMessage(val text: String): Message() {
+    override fun toString() = text
 }

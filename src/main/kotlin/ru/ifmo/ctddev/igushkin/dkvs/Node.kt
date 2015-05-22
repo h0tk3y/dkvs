@@ -17,22 +17,9 @@ import kotlin.concurrent.thread
  */
 public class Node(val id: Int) : Runnable, AutoCloseable {
 
-    private val persistenceFileName = "dkvs_$id.log"
-    private val diskPersistence = FileWriter(persistenceFileName, true).buffered()
-
     val logger = Logger.getLogger("node.$id")
     fun log(s: String) = logger.info(s)
     fun logErr(s: String, t: Throwable? = null) = logger.log(Level.SEVERE, s, t)
-
-    private fun saveToDisk(data: Any) {
-        synchronized(diskPersistence) {
-            with(diskPersistence) {
-                write(data.toString())
-                newLine()
-                flush()
-            }
-        }
-    }
 
     private val serverSocket = ServerSocket(globalConfig.port(id))
 
@@ -40,9 +27,10 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private volatile var stopping = false
 
     private val sender = { to: Int, m: Message -> send(to, m) }
+    private val clientSender = { to: Int, s: String -> sendToClient(to, s) }
     private val allIds = globalConfig.ids
 
-    private val localReplica = Replica(id, sender, allIds)
+    private val localReplica = Replica(id, sender, clientSender, allIds)
     private val localLeader = Leader(id, sender, allIds, allIds)
     private val localAcceptor = Acceptor(id, sender)
 
@@ -98,6 +86,10 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
             neighbors[to].messages.offer(message)
     }
 
+    private fun sendToClient(to: Int, message: String) {
+        clients[to]?.messages?.offer(TextMessage(message))
+    }
+
     /**
      * Executed in new thread, it decides what kind of connection [client] belongs to
      * and switches to [listenToNode] or [listenToClient]
@@ -115,14 +107,13 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
                         }
                         listenToNode(reader, nodeId)
                     }
-                    "get", "set", "delete" -> {
+                    "get", "set", "delete", "ping" -> {
                         val newClientId = (clients.keySet().max() ?: 0) + 1
                         clients[newClientId] = NeighborEntry(client)
 
                         // Since we've already read a message, we have to handle it on the spot
-                        // refactor Try to improve may be?
                         val firstMessage = ClientRequest.parse(newClientId, parts)
-                        eventQueue.offer(firstMessage)
+                        receiveClientRequest(firstMessage)
 
                         /** Spawn communication thread. */
                         thread { speakToClient(newClientId) }
@@ -175,10 +166,18 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         log("Client $clientId connected.")
         dispatch(reader) { parts ->
             val message = ClientRequest.parse(clientId, parts)
-            log("Message from $clientId: ${parts.join(" ")}")
-            localReplica.receiveMessage(message)
+            receiveClientRequest(message)
         }
     }
+
+    private fun receiveClientRequest(request: ClientRequest) {
+        log("Message from client ${request.fromId}: ${request}")
+        if (request is PingRequest)
+            sendToClient(request.fromId, "PONG")
+        else
+            eventQueue add request
+    }
+
 
     private fun speakToNode(nodeId: Int) {
         val clientSocket = Socket()
