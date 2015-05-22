@@ -18,6 +18,11 @@ import java.util.HashMap
  *
  * @property slotIn Next slot to propose a request to.
  * @property slotOut First slot with non-applied request.
+ *
+ * @property requests [ClientRequest]s which haven't been proposed yet
+ * @property proposals slot -> [ClientRequest] which have been proposed for certain slots but haven''t been processed by [Leader]s yet
+ * @property decisions slot -> [ClientRequest] which have been accepted by [Leader]s
+ * @property performed [ClientRequest]s which have already been [perform]ed.
  */
 
 public class Replica(val id: Int,
@@ -45,11 +50,11 @@ public class Replica(val id: Int,
     public volatile var slotIn: Int = 0; private set
     public volatile var slotOut: Int = 0; private set
 
-    private val performed = hashSetOf<ClientRequest>()
-
     private val requests = hashSetOf<ClientRequest>()
     private val proposals = hashMapOf<Int, ClientRequest>()
     private val decisions = hashMapOf<Int, ClientRequest>()
+
+    private val performed = hashSetOf<ClientRequest>()
 
     private fun perform(c: ClientRequest) {
         if (c in performed)
@@ -71,6 +76,8 @@ public class Replica(val id: Int,
             }
         }
         performed add c
+        if (c !is GetRequest)
+            saveToDisk(c)
     }
 
     private fun propose() {
@@ -109,12 +116,10 @@ public class Replica(val id: Int,
                         }
                     }
                     perform(cmd)
-                    ++slotOut
+                    slotOut
                 }
             }
         }
         propose()
     }
 }
-
-public data class Proposal(val slot: Int, val command: ClientRequest)

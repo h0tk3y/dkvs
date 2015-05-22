@@ -7,7 +7,7 @@ package ru.ifmo.ctddev.igushkin.dkvs
 public class Acceptor(val id: Int,
                       val send: (leaderId: Int, Message) -> Unit
 ) {
-    private volatile var ballotNumber = -1
+    private volatile var ballotNumber = Ballot(-1, -1)
 
     /** Slot -> most recent AcceptProposal */
     private val accepted = hashMapOf<Int, AcceptProposal>()
@@ -34,11 +34,11 @@ public class Acceptor(val id: Int,
  * See [Paxos Made Moderately Complex]
  * [http://www.cs.cornell.edu/courses/cs7412/2011sp/paxos.pdf]
  */
-public data class AcceptProposal(val ballotNum: Int, val slot: Int, val command: ClientRequest) {
+public data class AcceptProposal(val ballotNum: Ballot, val slot: Int, val command: ClientRequest) {
     override fun toString(): String = "$ballotNum $slot $command"
 
     companion object {
         public fun parse(parts: Array<String>): AcceptProposal =
-                AcceptProposal(parts[0].toInt(), parts[1].toInt(), ClientRequest.parse(0, parts[2..parts.lastIndex]))
+                AcceptProposal(Ballot.parse(parts[0]), parts[1].toInt(), ClientRequest.parse(0, parts[2..parts.lastIndex]))
     }
 }

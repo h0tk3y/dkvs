@@ -24,11 +24,11 @@ public abstract class Message() {
 
                     "propose" -> ProposeMessage(parts[1].toInt(), parts[2].toInt(), ClientRequest.parse(-1, parts[3..parts.lastIndex]))
 
-                    "p1a" -> PhaseOneRequest(parts[1].toInt(), parts[2].toInt())
+                    "p1a" -> PhaseOneRequest(parts[1].toInt(), Ballot.parse(parts[2]))
                     "p2a" -> PhaseTwoRequest(parts[1].toInt(), AcceptProposal.parse(parts[2..parts.lastIndex]))
 
                     "p1b" -> PhaseOneResponse.parse(parts)
-                    "p2b" -> PhaseTwoResponse(parts[1].toInt(), parts[2].toInt())
+                    "p2b" -> PhaseTwoResponse(parts[1].toInt(), Ballot.parse(parts[2]))
 
                     "get", "set", "delete" -> throw IllegalArgumentException("Use ClientRequest.parse(id, parts) instead.")
 
@@ -108,20 +108,20 @@ public data class PingRequest(fromId: Int): ClientRequest(fromId)
 
 public abstract class LeaderMessage(val fromId: Int): Message()
 
-public class ProposeMessage(fromId: Int, val slotIn: Int, val request: ClientRequest): LeaderMessage(fromId) {
-    override fun toString() = "propose $fromId $slotIn $request"
+public class ProposeMessage(fromId: Int, val slot: Int, val request: ClientRequest): LeaderMessage(fromId) {
+    override fun toString() = "propose $fromId $slot $request"
 }
 
 /**
  * Sent to [Scout] from [Acceptor] in response to [PhaseOneRequest].
  */
-public class PhaseOneResponse(fromId: Int, val ballotNum: Int, val pvalues: Collection<AcceptProposal>): LeaderMessage(fromId) {
+public class PhaseOneResponse(fromId: Int, val ballotNum: Ballot, val pvalues: Collection<AcceptProposal>): LeaderMessage(fromId) {
     override fun toString() = "p1b $fromId $ballotNum ${pvalues.joinToString(payloadSplitter)}"
 
     companion object { fun parse(parts: Array<String>): PhaseOneResponse {
         if (parts[0] != "p1b") throw IllegalArgumentException("PhaseOneResponse should start by \"p1b\"")
         val fromId = parts[1].toInt()
-        val ballotNum = parts[2].toInt()
+        val ballotNum = Ballot.parse(parts[2])
         val pvalues = parts[3..parts.lastIndex].join(" ").split("$payloadSplitter") map {it.split(' ')} map { AcceptProposal.parse(it) }
         return PhaseOneResponse(fromId, ballotNum, LinkedHashSet(pvalues))
     }}
@@ -132,7 +132,7 @@ val payloadSplitter = " _#_ "
 /**
  * Sent to [Scout] from [Acceptor] in response to [PhaseTwoRequest].
  */
-public class PhaseTwoResponse(fromId: Int, val ballotNum: Int): LeaderMessage(fromId) {
+public class PhaseTwoResponse(fromId: Int, val ballotNum: Ballot): LeaderMessage(fromId) {
     override fun toString() = "p2b $fromId $ballotNum"
 }
 
@@ -141,13 +141,13 @@ public class PhaseTwoResponse(fromId: Int, val ballotNum: Int): LeaderMessage(fr
 /**
  * Sub-hierarchy of messages sent to [Acceptor]s.
  */
-public abstract class AcceptorMessage(val fromId: Int, val ballotNum: Int): Message()
+public abstract class AcceptorMessage(val fromId: Int, val ballotNum: Ballot): Message()
 
 /**
  * Sent by [Scout] to [Acceptor].
  * Normal response is [PhaseOneResponse].
  */
-public class PhaseOneRequest(fromId: Int, ballotNum: Int): AcceptorMessage(fromId, ballotNum) {
+public class PhaseOneRequest(fromId: Int, ballotNum: Ballot): AcceptorMessage(fromId, ballotNum) {
     override fun toString() = "p1a $fromId $ballotNum"
 }
 
