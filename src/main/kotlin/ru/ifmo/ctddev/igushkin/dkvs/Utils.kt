@@ -8,7 +8,12 @@ import java.io.BufferedReader
 
 fun BufferedReader.forEachLine(f: (String) -> Unit) = lines().forEach(f)
 
-fun dispatch(reader: BufferedReader, f: (Array<String>) -> Unit) = reader.forEachLine { f(it.split(" ")) }
+fun dispatch(reader: BufferedReader, f: (Array<String>) -> Unit) {
+    var line: String? = null
+    while ({line = reader.readLine(); line != null}()) {
+        f(line!!.split(' '))
+    }
+}
 
 fun forever(f: () -> Unit) {
     while (true) f()

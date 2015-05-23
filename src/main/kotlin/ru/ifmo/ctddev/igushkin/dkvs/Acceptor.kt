@@ -7,7 +7,7 @@ package ru.ifmo.ctddev.igushkin.dkvs
 public class Acceptor(val id: Int,
                       val send: (leaderId: Int, Message) -> Unit
 ) {
-    private volatile var ballotNumber = Ballot(-1, -1)
+    private volatile var ballotNumber = Ballot(1, globalConfig.ids.first())
 
     /** Slot -> most recent AcceptProposal */
     private val accepted = hashMapOf<Int, AcceptProposal>()

@@ -10,7 +10,7 @@ import kotlin.properties.Delegates
  * timeout: idleness limit for nodes communication
  */
 
-public data class Config(val addresses: Map<Int, String>,
+public data class Configuration(val addresses: Map<Int, String>,
                          val timeout: Long
 ) {
     public fun port(id: Int): Int {
@@ -37,12 +37,12 @@ public data class Config(val addresses: Map<Int, String>,
 val globalConfig by Delegates.lazy { readDkvsProperties() }
 val CHARSET = "UTF-8"
 
-public fun readDkvsProperties(): Config {
+public fun readDkvsProperties(): Configuration {
 
     val CONFIG_PROPERTIES_NAME = "dkvs.properties"
     val NODE_ADDRESS_PREFIX = "node"
 
-    val input = javaClass<Config>().getClassLoader().getResourceAsStream(CONFIG_PROPERTIES_NAME)
+    val input = javaClass<Configuration>().getClassLoader().getResourceAsStream(CONFIG_PROPERTIES_NAME)
     val props = Properties()
     props.load(input)
 
@@ -58,5 +58,5 @@ public fun readDkvsProperties(): Config {
         }
     }
 
-    return Config(Collections.unmodifiableMap(addresses), timeout)
+    return Configuration(Collections.unmodifiableMap(addresses), timeout)
 }

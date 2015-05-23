@@ -1,6 +1,8 @@
 package ru.ifmo.ctddev.igushkin.dkvs
 
+import java.io.File
 import java.io.FileWriter
+import java.util.ArrayList
 import java.util.HashMap
 
 /**
@@ -44,13 +46,41 @@ public class Replica(val id: Int,
         }
     }
 
-    private val state: MutableMap<String, String> = HashMap()
-    //todo read saved state on initialization
+    private val state: MutableMap<String, String> = readStateFromDisk()
+
+    private fun readStateFromDisk(): HashMap<String, String> {
+        if (!File(persistenceFileName).exists())
+            return HashMap()
+        val reader = File(persistenceFileName).reader().buffered()
+        val lines = ArrayList<String>()
+        for (l in reader.lines())
+            lines add l
+        val result = hashMapOf<String, String>()
+        val removedKeys = hashSetOf<String>()
+        for (l in lines.reverse()) {
+            val parts = l.split(' ')
+            val key = parts[1]
+            if (key in result || key in removedKeys)
+                continue
+            when (parts[0]) {
+                "set"    -> {
+                    result[key] = parts[2..parts.lastIndex].join(" ")
+                }
+                "delete" -> {
+                    removedKeys add key
+                }
+            }
+        }
+        return result
+    }
 
     public volatile var slotIn: Int = 0; private set
     public volatile var slotOut: Int = 0; private set
 
-    private val requests = hashSetOf<ClientRequest>()
+    //refactor
+    private val awaitingClients = hashMapOf<ClientRequest, Int>()
+
+    private val requests = linkedListOf<ClientRequest>()
     private val proposals = hashMapOf<Int, ClientRequest>()
     private val decisions = hashMapOf<Int, ClientRequest>()
 
@@ -60,19 +90,22 @@ public class Replica(val id: Int,
         if (c in performed)
             return
         when (c) {
-            is GetRequest    -> {
-                sendToClient(c.fromId,
-                             if (c.key in state)
-                                 "VALUE ${c.key} ${state[c.key]}" else
-                                 "NOT_FOUND")
-            }
             is SetRequest    -> {
                 state[c.key] = c.value
                 sendToClient(c.fromId, "STORED")
+                val awaitingClient = awaitingClients[c]
+                if (awaitingClient != null) {
+                    sendToClient(awaitingClient, "STORED")
+                    awaitingClients remove awaitingClient
+                }
             }
             is DeleteRequest -> {
                 val result = (state remove c.key) != null
-                sendToClient(c.fromId, if (result) "DELETED" else "NOT_FOUND")
+                val awaitingClient = awaitingClients[c]
+                if (awaitingClient != null) {
+                    sendToClient(awaitingClient, if (result) "DELETED" else "NOT_FOUND")
+                    awaitingClients remove awaitingClient
+                }
             }
         }
         performed add c
@@ -99,8 +132,15 @@ public class Replica(val id: Int,
      */
     public fun receiveMessage(message: ReplicaMessage) {
         when (message) {
+            is GetRequest      -> {
+                sendToClient(message.fromId,
+                             if (message.key in state)
+                                 "VALUE ${message.key} ${state[message.key]}" else
+                                 "NOT_FOUND")
+            }
             is ClientRequest   -> {
                 requests add message
+                awaitingClients[message] = message.fromId
             }
             is DecisionMessage -> {
                 val slot = message.slot
@@ -116,7 +156,7 @@ public class Replica(val id: Int,
                         }
                     }
                     perform(cmd)
-                    slotOut
+                    ++slotOut
                 }
             }
         }

@@ -15,7 +15,7 @@ public class Leader(val id: Int,
                     val acceptorIds: List<Int>
 ) {
     public volatile var active: Boolean = isInitialLeader(this); private set
-    public volatile var currentBallot: Ballot = Ballot(-1, id); private set
+    public volatile var currentBallot: Ballot = Ballot(1, id); private set
 
     //todo reduce state
     private val proposals = hashMapOf<Int, ClientRequest>()
@@ -47,8 +47,12 @@ public class Leader(val id: Int,
         if (b > currentBallot) {
             active = false
             currentBallot = Ballot(b.ballotNum + 1, id)
-            //todo spawn scout only on current leader death
-            scouting(currentBallot)
+            onFault = { faulty ->
+                if (b.leaderId in faulty) {
+                    scouting(currentBallot)
+                    onFault = null
+                }
+            }
         }
     }
 
@@ -72,7 +76,7 @@ public class Leader(val id: Int,
                 preempted(response.ballot)
             else {
                 waitFor remove response.fromId
-                if (waitFor.size() < acceptorIds.size() / 2) {
+                if (waitFor.isEmpty() || waitFor.size() < acceptorIds.size() / 2) {
                     replicaIds.forEach {
                         send(it, DecisionMessage(response.proposal.slot,
                                                  response.proposal.command))
@@ -116,8 +120,22 @@ public class Leader(val id: Int,
     private val scouts = hashMapOf<Ballot, Scout>()
 
     private fun scouting(ballot: Ballot) {
-        scouts[ballot] = Scout(ballot)
+        scouts[ballot] = Scout()
         acceptorIds.forEach { send(it, PhaseOneRequest(id, ballot)) }
+    }
+
+    //------ Fault detection -------
+
+    private volatile var onFault: ((HashSet<Int>) -> Unit)? = null
+
+    public  fun notifyFault(nodes: HashSet<Int>) {
+        if (onFault != null)
+            onFault!!(nodes)
+    }
+
+    public fun afterRun() {
+        if (!active)
+            scouting(currentBallot)
     }
 }
 

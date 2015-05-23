@@ -27,7 +27,7 @@ public abstract class Message() {
                 "p1b"      -> PhaseOneResponse.parse(parts)
                 "p2b"      -> PhaseTwoResponse(parts[1].toInt(), Ballot.parse(parts[2]), AcceptProposal.parse(parts[3..p]))
                 else       -> throw IllegalArgumentException("Unknown message.")
-                //for "get", "set", "delete" use ClientRequest.parse(...)
+            //for "get", "set", "delete" use ClientRequest.parse(...)
             }
         }
     }
@@ -126,7 +126,10 @@ public class PhaseOneResponse(fromId: Int,
             val fromId = parts[1].toInt()
             val originalBallot = Ballot.parse(parts[2])
             val ballotNum = Ballot.parse(parts[3])
-            val pvalues = parts[4..parts.lastIndex].join(" ").split("$payloadSplitter") map { it.split(' ') } map { AcceptProposal.parse(it) }
+            val pvalues = parts[4..parts.lastIndex].join(" ").split("$payloadSplitter")
+                    .filter { it.length() > 0 }
+                    .map { it.split(' ') }
+                    .map { AcceptProposal.parse(it) }
             return PhaseOneResponse(fromId, originalBallot, ballotNum, LinkedHashSet(pvalues))
         }
     }

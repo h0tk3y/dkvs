@@ -5,10 +5,12 @@ import java.io.File
 import java.io.FileWriter
 import java.io.IOException
 import java.net.*
+import java.util.HashMap
 import java.util.concurrent.LinkedBlockingDeque
 import java.util.logging.Level
 import java.util.logging.Logger
 import kotlin.concurrent.thread
+import kotlin.concurrent.timer
 
 /**
  * @param id Node identifier which should be unique across the system instance.
@@ -18,7 +20,7 @@ import kotlin.concurrent.thread
 public class Node(val id: Int) : Runnable, AutoCloseable {
 
     val logger = Logger.getLogger("node.$id")
-    fun log(s: String) = logger.info(s)
+    fun log(s: String) = logger.log(Level.INFO, "ID$id # $s")
     fun logErr(s: String, t: Throwable? = null) = logger.log(Level.SEVERE, s, t)
 
     private val serverSocket = ServerSocket(globalConfig.port(id))
@@ -26,7 +28,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private volatile var started = false
     private volatile var stopping = false
 
-    private val sender = { to: Int, m: Message -> send(to, m) }
+    private val sender = { to: Int, m: Message -> send(to, m); }
     private val clientSender = { to: Int, s: String -> sendToClient(to, s) }
     private val allIds = globalConfig.ids
 
@@ -42,28 +44,35 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
         for (i in 1..globalConfig.nodesCount)
             if (i != id)
-                /** Spawn communication thread. */
-                thread { speakToNode(id) }
+            /** Spawn communication thread. */
+                thread { speakToNode(i) }
 
         thread {
             handleMessages()
         }
 
         thread {
+            monitorFaults()
+        }
+
+        thread {
             while (!stopping)
                 try {
                     val client = serverSocket.accept()
+                    log("Accepted connection from ${client.getRemoteSocketAddress()}.")
                     /** Spawn communication thread. */
                     thread { handleRequest(client) }
                 } catch (ignored: SocketException) {
                 }
         }
+
+        localLeader.afterRun()
     }
 
     override fun close() {
         stopping = true
         serverSocket.close()
-        for (n in neighbors + clients.values()) {
+        for (n in nodes.values() + clients.values()) {
             with(n) {
                 input?.close()
                 output?.close()
@@ -71,19 +80,70 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         }
     }
 
-    private data class NeighborEntry(var input: Socket? = null,
-                                     var output: Socket? = null) {
+    private data class ConnectionEntry(var input: Socket? = null,
+                                       var output: Socket? = null) {
+
+        volatile public var ready: Boolean = false; private set
+
+        public fun setReady() {
+            ready = true;
+        }
+
+        public fun resetOutput() {
+            output?.close()
+            output = Socket();
+            ready = false;
+            messages.retainAll(messages.filter { it !is PingMessage })
+        }
+
         val messages: LinkedBlockingDeque<Message> = LinkedBlockingDeque()
+        volatile var aliveIn = false
+        volatile var aliveOut = false
     }
 
-    private val neighbors = Array(globalConfig.nodesCount) { NeighborEntry() }
-    private val clients = sortedMapOf<Int, NeighborEntry>()
+    private val nodes = HashMap(globalConfig.ids.map { it to ConnectionEntry() }.toMap())
+    private val clients = sortedMapOf<Int, ConnectionEntry>()
+
+    private fun monitorFaults() {
+        val faultyNodes = hashSetOf<Int>()
+        var tickTock = true //fixme dirty hack
+
+        timer(period = globalConfig.timeout) {
+            faultyNodes.clear()
+            tickTock = !tickTock
+
+            nodes.entrySet().filter { it.value.ready } forEach { p ->
+                val (i, it) = p
+                if (!it.aliveIn && tickTock) {
+                    it.input?.close()
+                    faultyNodes.add(i)
+                    log("Node $i is faulty, closing its connection.")
+                }
+                if (!it.aliveOut) {
+                    if (nodes[i].output != null)
+                        send(i, PingMessage())
+                }
+                it.aliveIn = false
+                it.aliveOut = false
+            }
+
+            if (faultyNodes.size() > 0)
+                localLeader.notifyFault(faultyNodes)
+        }
+    }
+
+    private fun sendFirst(to:Int, message: Message) {
+        if (to == id)
+            eventQueue addFirst message
+        else
+            nodes[to]!!.messages addFirst  message
+    }
 
     private fun send(to: Int, message: Message) {
         if (to == id)
-            eventQueue.offer(message)
+            eventQueue add message
         else
-            neighbors[to].messages.offer(message)
+            nodes[to]!!.messages add message
     }
 
     private fun sendToClient(to: Int, message: String) {
@@ -96,33 +156,42 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
      */
     private fun handleRequest(client: Socket) {
         val reader = client.getInputStream().reader(CHARSET).buffered()
-        reader.use {
-            dispatch(it) { parts ->
-                when (parts[0]) {
-                    "node"                 -> {
-                        val nodeId = parts[1].toInt()
-                        with (neighbors[nodeId]) {
-                            input?.close()
-                            input = client
-                        }
-                        listenToNode(reader, nodeId)
+        try {
+            val l = reader.readLine()
+            val parts = l.split(' ')
+            when (parts[0]) {
+                "node"                         -> {
+                    val nodeId = parts[1].toInt()
+                    if (nodeId !in nodes)
+                        nodes[nodeId] = ConnectionEntry(client)
+                    with (nodes[nodeId]!!) {
+                        input?.close()
+                        input = client
                     }
-                    "get", "set", "delete", "ping" -> {
-                        val newClientId = (clients.keySet().max() ?: 0) + 1
-                        clients[newClientId] = NeighborEntry(client)
+                    listenToNode(reader, nodeId)
 
-                        // Since we've already read a message, we have to handle it on the spot
-                        val firstMessage = ClientRequest.parse(newClientId, parts)
-                        receiveClientRequest(firstMessage)
+                }
+                "get", "set", "delete", "ping" -> {
+                    val newClientId = (clients.keySet().max() ?: 0) + 1
+                    clients[newClientId] = ConnectionEntry(client)
 
-                        /** Spawn communication thread. */
-                        thread { speakToClient(newClientId) }
-                        listenToClient(reader, newClientId)
-                    }
+                    // Since we've already read a message, we have to handle it on the spot
+                    val firstMessage = ClientRequest.parse(newClientId, parts)
+                    receiveClientRequest(firstMessage)
+
+                    /** Spawn communication thread. */
+                    thread { speakToClient(newClientId) }
+                    listenToClient(reader, newClientId)
+
                 }
             }
+        } catch (ignored: SocketException) {
+        } catch (e: IOException) {
+            logErr("I/O error", e)
         }
+
     }
+
 
     /**
      * Executed in main thread, it takes received messages one by one from
@@ -130,7 +199,8 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
      */
     private fun handleMessages() {
         forever {
-            val m = eventQueue.poll()
+            val m = eventQueue.take()
+            log("Handling message: $m")
             when (m) {
                 is ReplicaMessage  -> localReplica.receiveMessage(m)
                 is LeaderMessage   -> localLeader.receiveMessage(m)
@@ -152,9 +222,16 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
      */
     private fun listenToNode(reader: BufferedReader, nodeId: Int) {
         log("Started listening to node.$nodeId.")
+        nodes[nodeId]!!.aliveIn = true
         dispatch(reader) { parts ->
+            nodes[nodeId]!!.aliveIn = true
             val message = Message.parse(parts)
-            eventQueue.offer(message)
+            log("Received from $nodeId: $message")
+            if (message is PingMessage)
+                send(nodeId, PongMessage())
+            else
+                eventQueue.add(message)
+
         }
     }
 
@@ -164,9 +241,13 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
      */
     private fun listenToClient(reader: BufferedReader, clientId: Int) {
         log("Client $clientId connected.")
-        dispatch(reader) { parts ->
-            val message = ClientRequest.parse(clientId, parts)
-            receiveClientRequest(message)
+        try {
+            dispatch(reader) { parts ->
+                val message = ClientRequest.parse(clientId, parts)
+                receiveClientRequest(message)
+            }
+        } catch (e: SocketException) {
+            logErr("Lost connection to Client $clientId: $e}")
         }
     }
 
@@ -180,8 +261,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
 
     private fun speakToNode(nodeId: Int) {
-        val clientSocket = Socket()
-        neighbors[nodeId].output = clientSocket
+        val node = nodes[nodeId]
 
         val address = globalConfig.address(nodeId)
         val port = globalConfig.port(nodeId)
@@ -193,22 +273,32 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
         while (!stopping) {
             try {
-                clientSocket.connect(InetSocketAddress(address, port))
+                node.resetOutput()
+                val socket = node.output!!
+                socket.connect(InetSocketAddress(address, port))
                 log("Connected to node.$nodeId.")
-                send(nodeId, NodeMessage(id))
-                val writer = clientSocket.getOutputStream().writer(CHARSET)
+                sendFirst(nodeId, NodeMessage(id))
+                val writer = socket.getOutputStream().writer(CHARSET)
 
-                forever {
-                    val m = neighbors[nodeId].messages.pollFirst()
+                nodes[nodeId].setReady()
+
+                while (true) {
+                    nodes[nodeId].aliveOut = true
+
+                    val m = nodes[nodeId].messages.take()
                     try {
                         log("Sending to $nodeId: $m")
                         writer.write("$m\n")
+                        writer.flush()
                     } catch (ioe: IOException) {
                         logErr("Couldn't send a message. Retrying.")
-                        neighbors[nodeId].messages.addFirst(m)
+                        sendFirst(nodeId, m)
+                        break
                     }
                 }
 
+            } catch (e: ConnectException) {
+                logErr("Could not connect to node $nodeId, retrying.")
             } catch (e: SocketException) {
                 logErr("Connection to node.$nodeId lost.", e)
             }
@@ -220,13 +310,14 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         val queue = entry.messages
         val writer = entry.input!!.getOutputStream().writer()
         forever {
-            val m = queue.poll()
+            val m = queue.take()
             try {
                 log("Sending to client $clientId: $m")
                 writer write "$m\n"
+                writer.flush()
             } catch (ioe: IOException) {
                 logErr("Couldn't send a message. Retrying.")
-                neighbors[clientId].messages.addFirst(m)
+                nodes[clientId].messages.addFirst(m)
             }
         }
     }
