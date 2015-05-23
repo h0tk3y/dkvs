@@ -76,6 +76,8 @@ public class DecisionMessage(val slot: Int, val request: ClientRequest) : Replic
  * @param clientId Node-local client id.
  */
 public abstract class ClientRequest(clientId: Int) : ReplicaMessage(clientId) {
+
+    //fixme Distinguish same commands
     companion object {
         public fun parse(clientId: Int, parts: Array<String>): ClientRequest =
                 when (parts[0]) {

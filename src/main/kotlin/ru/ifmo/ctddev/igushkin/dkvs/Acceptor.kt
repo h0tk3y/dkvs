@@ -15,8 +15,10 @@ public class Acceptor(val id: Int,
     public fun receiveMessage(message: AcceptorMessage) {
         when (message) {
             is PhaseOneRequest -> {
-                if (message.ballotNum > ballotNumber)
+                if (message.ballotNum > ballotNumber) {
                     ballotNumber = message.ballotNum
+                    logPxs("ACCEPTOR ADOPTED $ballotNumber")
+                }
                 send(message.fromId, PhaseOneResponse(id, message.ballotNum, ballotNumber, accepted.values()))
             }
             is PhaseTwoRequest -> {

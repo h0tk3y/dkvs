@@ -12,16 +12,18 @@ import java.util.logging.Logger
 import kotlin.concurrent.thread
 import kotlin.concurrent.timer
 
+val logger = Logger.getAnonymousLogger()
+
+fun logMsg(s: String) = logger.log(Level.INFO, "- $s")
+fun logPxs(s: String) = logger.log(Level.INFO, "# $s")
+fun logErr(s: String, t: Throwable? = null) = logger.log(Level.WARNING, "X $s", t)
+
 /**
  * @param id Node identifier which should be unique across the system instance.
  *
  * A node contains one [Replica], one [Leader] and one [Acceptor] in itself.
  */
 public class Node(val id: Int) : Runnable, AutoCloseable {
-
-    val logger = Logger.getLogger("node.$id")
-    fun log(s: String) = logger.log(Level.INFO, "ID$id # $s")
-    fun logErr(s: String, t: Throwable? = null) = logger.log(Level.SEVERE, s, t)
 
     private val serverSocket = ServerSocket(globalConfig.port(id))
 
@@ -51,15 +53,14 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
             handleMessages()
         }
 
-        thread {
-            monitorFaults()
-        }
+        monitorFaults()
+        pingIfIdle()
 
         thread {
             while (!stopping)
                 try {
                     val client = serverSocket.accept()
-                    log("Accepted connection from ${client.getRemoteSocketAddress()}.")
+                    logMsg("Accepted connection from ${client.getRemoteSocketAddress()}.")
                     /** Spawn communication thread. */
                     thread { handleRequest(client) }
                 } catch (ignored: SocketException) {
@@ -104,27 +105,33 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private val nodes = HashMap(globalConfig.ids.map { it to ConnectionEntry() }.toMap())
     private val clients = sortedMapOf<Int, ConnectionEntry>()
 
+    private fun pingIfIdle() {
+        timer(period = globalConfig.timeout / 4) {
+            nodes.entrySet().filter { it.key != id &&
+                                      it.value.ready}.forEach { p ->
+                val (id, n) = p
+                if (!n.aliveOut) {
+                    send(id, PingMessage())
+                }
+                n.aliveOut = false
+            }
+        }
+    }
+
     private fun monitorFaults() {
         val faultyNodes = hashSetOf<Int>()
-        var tickTock = true //fixme dirty hack
 
         timer(period = globalConfig.timeout) {
             faultyNodes.clear()
-            tickTock = !tickTock
 
-            nodes.entrySet().filter { it.value.ready } forEach { p ->
+            nodes.entrySet().filter { it.key != id } forEach { p ->
                 val (i, it) = p
-                if (!it.aliveIn && tickTock) {
+                if (!it.aliveIn) {
                     it.input?.close()
                     faultyNodes.add(i)
-                    log("Node $i is faulty, closing its connection.")
-                }
-                if (!it.aliveOut) {
-                    if (nodes[i].output != null)
-                        send(i, PingMessage())
+                    logMsg("Node $i is faulty, closing its connection.")
                 }
                 it.aliveIn = false
-                it.aliveOut = false
             }
 
             if (faultyNodes.size() > 0)
@@ -200,7 +207,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private fun handleMessages() {
         forever {
             val m = eventQueue.take()
-            log("Handling message: $m")
+            logMsg("Handling message: $m")
             when (m) {
                 is ReplicaMessage  -> localReplica.receiveMessage(m)
                 is LeaderMessage   -> localLeader.receiveMessage(m)
@@ -221,12 +228,13 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
      * another nodes into [eventQueue].
      */
     private fun listenToNode(reader: BufferedReader, nodeId: Int) {
-        log("Started listening to node.$nodeId.")
+        logMsg("Started listening to node $nodeId")
         nodes[nodeId]!!.aliveIn = true
         dispatch(reader) { parts ->
             nodes[nodeId]!!.aliveIn = true
             val message = Message.parse(parts)
-            log("Received from $nodeId: $message")
+            logMsg("Received from $nodeId: $message")
+
             if (message is PingMessage)
                 send(nodeId, PongMessage())
             else
@@ -240,7 +248,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
      * a client into [eventQueue].
      */
     private fun listenToClient(reader: BufferedReader, clientId: Int) {
-        log("Client $clientId connected.")
+        logMsg("Client $clientId connected.")
         try {
             dispatch(reader) { parts ->
                 val message = ClientRequest.parse(clientId, parts)
@@ -252,7 +260,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     }
 
     private fun receiveClientRequest(request: ClientRequest) {
-        log("Message from client ${request.fromId}: ${request}")
+        logMsg("Message from client ${request.fromId}: ${request}")
         if (request is PingRequest)
             sendToClient(request.fromId, "PONG")
         else
@@ -276,7 +284,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
                 node.resetOutput()
                 val socket = node.output!!
                 socket.connect(InetSocketAddress(address, port))
-                log("Connected to node.$nodeId.")
+                logMsg("Connected to node $nodeId.")
                 sendFirst(nodeId, NodeMessage(id))
                 val writer = socket.getOutputStream().writer(CHARSET)
 
@@ -287,20 +295,19 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
                     val m = nodes[nodeId].messages.take()
                     try {
-                        log("Sending to $nodeId: $m")
+                        logMsg("Sending to $nodeId: $m")
                         writer.write("$m\n")
                         writer.flush()
                     } catch (ioe: IOException) {
-                        logErr("Couldn't send a message. Retrying.")
+                        logErr("Couldn't send $m to $nodeId. Retrying.")
                         sendFirst(nodeId, m)
                         break
                     }
                 }
 
-            } catch (e: ConnectException) {
-                logErr("Could not connect to node $nodeId, retrying.")
+            } catch (ignored: ConnectException) {
             } catch (e: SocketException) {
-                logErr("Connection to node.$nodeId lost.", e)
+                logErr("Connection to node $nodeId lost.", e)
             }
         }
     }
@@ -312,7 +319,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         forever {
             val m = queue.take()
             try {
-                log("Sending to client $clientId: $m")
+                logMsg("Sending to client $clientId: $m")
                 writer write "$m\n"
                 writer.flush()
             } catch (ioe: IOException) {

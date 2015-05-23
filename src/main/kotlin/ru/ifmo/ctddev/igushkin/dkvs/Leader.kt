@@ -14,8 +14,12 @@ public class Leader(val id: Int,
                     val replicaIds: List<Int>,
                     val acceptorIds: List<Int>
 ) {
-    public volatile var active: Boolean = isInitialLeader(this); private set
+    public volatile var active: Boolean = true; private set
     public volatile var currentBallot: Ballot = Ballot(1, id); private set
+
+    public fun afterRun() {
+        scouting(currentBallot)
+    }
 
     //todo reduce state
     private val proposals = hashMapOf<Int, ClientRequest>()
@@ -31,7 +35,7 @@ public class Leader(val id: Int,
                 }
             }
             is PhaseOneResponse -> {
-                val ballot = message.ballotNum
+                val ballot = message.originalBallot
                 val scout = scouts[ballot]
                 scout?.receiveResonse(message)
             }
@@ -44,11 +48,15 @@ public class Leader(val id: Int,
     }
 
     private fun preempted(b: Ballot) {
+        logPxs("PREEMPTED: there's ballot $b")
         if (b > currentBallot) {
             active = false
             currentBallot = Ballot(b.ballotNum + 1, id)
+            logPxs("WAITING for ${b.leaderId} to fail.")
             onFault = { faulty ->
                 if (b.leaderId in faulty) {
+                    logMsg("Node ${b.leaderId} failed.")
+                    logPxs("SCOUT started for ballot $currentBallot")
                     scouting(currentBallot)
                     onFault = null
                 }
@@ -57,6 +65,7 @@ public class Leader(val id: Int,
     }
 
     private fun adopted(ballot: Ballot, pvalues: Map<Int, AcceptProposal>) {
+        logPxs("ADOPTED")
         for ((slot, pval) in pvalues) {
             proposals[slot] = pval.command
         }
@@ -72,11 +81,12 @@ public class Leader(val id: Int,
         val waitFor = HashSet(acceptorIds)
 
         fun receiveResponse(response: PhaseTwoResponse) {
-            if (response.ballot != currentBallot)
+            if (response.ballot != proposal.ballotNum) {
                 preempted(response.ballot)
-            else {
+                commanders remove proposal
+            } else {
                 waitFor remove response.fromId
-                if (waitFor.isEmpty() || waitFor.size() < acceptorIds.size() / 2) {
+                if (waitFor.size() < (acceptorIds.size()+1) / 2) {
                     replicaIds.forEach {
                         send(it, DecisionMessage(response.proposal.slot,
                                                  response.proposal.command))
@@ -90,28 +100,31 @@ public class Leader(val id: Int,
     private val commanders = hashMapOf<AcceptProposal, Commander>()
 
     private fun command(proposal: AcceptProposal) {
+        logPxs("COMMANDER started for $proposal")
         commanders[proposal] = Commander(proposal)
         acceptorIds.forEach { send(it, PhaseTwoRequest(id, proposal)) }
     }
 
     //------ Scout ------
 
-    inner class Scout() {
+    inner class Scout(val b: Ballot) {
         val waitFor = HashSet(acceptorIds)
         val proposals = hashMapOf<Int, AcceptProposal>()
 
         fun receiveResonse(response: PhaseOneResponse) {
-            if (response.ballotNum != currentBallot)
+            if (response.ballotNum != b) {
+                scouts remove b
                 preempted(response.ballotNum)
+            }
             else {
                 response.pvalues.forEach {
                     if (it.slot !in proposals || it.ballotNum > proposals[it.slot].ballotNum)
                         proposals[it.slot] = it
                 }
                 waitFor remove response.fromId
-                if (waitFor.size() < acceptorIds.size() / 2) {
-                    adopted(currentBallot, proposals)
-                    scouts remove currentBallot
+                if (waitFor.size() < (acceptorIds.size()+1) / 2) {
+                    scouts remove b
+                    adopted(b, proposals)
                 }
             }
         }
@@ -120,7 +133,7 @@ public class Leader(val id: Int,
     private val scouts = hashMapOf<Ballot, Scout>()
 
     private fun scouting(ballot: Ballot) {
-        scouts[ballot] = Scout()
+        scouts[ballot] = Scout(currentBallot)
         acceptorIds.forEach { send(it, PhaseOneRequest(id, ballot)) }
     }
 
@@ -131,11 +144,6 @@ public class Leader(val id: Int,
     public  fun notifyFault(nodes: HashSet<Int>) {
         if (onFault != null)
             onFault!!(nodes)
-    }
-
-    public fun afterRun() {
-        if (!active)
-            scouting(currentBallot)
     }
 }
 

@@ -37,12 +37,10 @@ public class Replica(val id: Int,
     private val diskPersistence = FileWriter(persistenceFileName, true).buffered()
 
     private fun saveToDisk(data: Any) {
-        synchronized(diskPersistence) {
-            with(diskPersistence) {
-                write(data.toString())
-                newLine()
-                flush()
-            }
+        with(diskPersistence) {
+            write(data.toString())
+            newLine()
+            flush()
         }
     }
 
@@ -87,12 +85,12 @@ public class Replica(val id: Int,
     private val performed = hashSetOf<ClientRequest>()
 
     private fun perform(c: ClientRequest) {
+        logPxs("PERFORMING $c at $slotOut")
         if (c in performed)
             return
         when (c) {
             is SetRequest    -> {
                 state[c.key] = c.value
-                sendToClient(c.fromId, "STORED")
                 val awaitingClient = awaitingClients[c]
                 if (awaitingClient != null) {
                     sendToClient(awaitingClient, "STORED")
@@ -116,6 +114,7 @@ public class Replica(val id: Int,
     private fun propose() {
         while (requests.isNotEmpty()) {
             val c = requests.first()
+            logPxs("PROPOSING $c to $slotIn")
             if (slotIn !in decisions) {
                 requests remove c
                 proposals[slotIn] = c
@@ -143,6 +142,7 @@ public class Replica(val id: Int,
                 awaitingClients[message] = message.fromId
             }
             is DecisionMessage -> {
+                logPxs("DECISION $message")
                 val slot = message.slot
                 decisions.put(slot, message.request)
 
