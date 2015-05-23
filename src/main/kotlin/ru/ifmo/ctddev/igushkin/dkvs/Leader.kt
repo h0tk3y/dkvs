@@ -1,5 +1,6 @@
 package ru.ifmo.ctddev.igushkin.dkvs
 
+import java.util.HashSet
 import kotlin.test.todo
 
 /**
@@ -14,35 +15,113 @@ public class Leader(val id: Int,
                     val acceptorIds: List<Int>
 ) {
     public volatile var active: Boolean = isInitialLeader(this); private set
-    public volatile var ballot: Ballot = Ballot(-1, id); private set
+    public volatile var currentBallot: Ballot = Ballot(-1, id); private set
 
+    //todo reduce state
     private val proposals = hashMapOf<Int, ClientRequest>()
 
     public fun receiveMessage(message: LeaderMessage) {
         when (message) {
-            is ProposeMessage -> {
+            is ProposeMessage   -> {
                 if (message.slot !in proposals) {
                     proposals[message.slot] = message.request
                     if (active) {
-                        command(AcceptProposal(ballot, message.slot, message.request))
+                        command(AcceptProposal(currentBallot, message.slot, message.request))
                     }
                 }
             }
             is PhaseOneResponse -> {
-                //todo
+                val ballot = message.ballotNum
+                val scout = scouts[ballot]
+                scout?.receiveResonse(message)
             }
             is PhaseTwoResponse -> {
-                //todo
+                val proposal = message.proposal
+                val commander = commanders[proposal]
+                commander?.receiveResponse(message)
             }
         }
     }
 
+    private fun preempted(b: Ballot) {
+        if (b > currentBallot) {
+            active = false
+            currentBallot = Ballot(b.ballotNum + 1, id)
+            //todo spawn scout only on current leader death
+            scouting(currentBallot)
+        }
+    }
+
+    private fun adopted(ballot: Ballot, pvalues: Map<Int, AcceptProposal>) {
+        for ((slot, pval) in pvalues) {
+            proposals[slot] = pval.command
+        }
+        active = true
+        for ((s, c) in proposals) {
+            command(AcceptProposal(ballot, s, c))
+        }
+    }
+
+    //----- Commander -----
+
+    inner class Commander(val proposal: AcceptProposal) {
+        val waitFor = HashSet(acceptorIds)
+
+        fun receiveResponse(response: PhaseTwoResponse) {
+            if (response.ballot != currentBallot)
+                preempted(response.ballot)
+            else {
+                waitFor remove response.fromId
+                if (waitFor.size() < acceptorIds.size() / 2) {
+                    replicaIds.forEach {
+                        send(it, DecisionMessage(response.proposal.slot,
+                                                 response.proposal.command))
+                    }
+                    commanders remove proposal
+                }
+            }
+        }
+    }
+
+    private val commanders = hashMapOf<AcceptProposal, Commander>()
+
     private fun command(proposal: AcceptProposal) {
-        //todo
+        commanders[proposal] = Commander(proposal)
+        acceptorIds.forEach { send(it, PhaseTwoRequest(id, proposal)) }
+    }
+
+    //------ Scout ------
+
+    inner class Scout() {
+        val waitFor = HashSet(acceptorIds)
+        val proposals = hashMapOf<Int, AcceptProposal>()
+
+        fun receiveResonse(response: PhaseOneResponse) {
+            if (response.ballotNum != currentBallot)
+                preempted(response.ballotNum)
+            else {
+                response.pvalues.forEach {
+                    if (it.slot !in proposals || it.ballotNum > proposals[it.slot].ballotNum)
+                        proposals[it.slot] = it
+                }
+                waitFor remove response.fromId
+                if (waitFor.size() < acceptorIds.size() / 2) {
+                    adopted(currentBallot, proposals)
+                    scouts remove currentBallot
+                }
+            }
+        }
+    }
+
+    private val scouts = hashMapOf<Ballot, Scout>()
+
+    private fun scouting(ballot: Ballot) {
+        scouts[ballot] = Scout(ballot)
+        acceptorIds.forEach { send(it, PhaseOneRequest(id, ballot)) }
     }
 }
 
-public data class Ballot(val ballotNum: Int, val leaderId: Int): Comparable<Ballot> {
+public data class Ballot(val ballotNum: Int, val leaderId: Int) : Comparable<Ballot> {
     override fun compareTo(other: Ballot): Int {
         val result = ballotNum.compareTo(other.ballotNum)
         return if (result != 0) result else leaderId.compareTo(other.leaderId)

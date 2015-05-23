@@ -17,12 +17,12 @@ public class Acceptor(val id: Int,
             is PhaseOneRequest -> {
                 if (message.ballotNum > ballotNumber)
                     ballotNumber = message.ballotNum
-                send(message.fromId, PhaseOneResponse(id, ballotNumber, accepted.values()))
+                send(message.fromId, PhaseOneResponse(id, message.ballotNum, ballotNumber, accepted.values()))
             }
             is PhaseTwoRequest -> {
                 if (message.ballotNum == ballotNumber)
                     accepted[message.payload.slot] = message.payload
-                send(message.fromId, PhaseTwoResponse(id, ballotNumber))
+                send(message.fromId, PhaseTwoResponse(id, ballotNumber, message.payload))
             }
         }
     }
