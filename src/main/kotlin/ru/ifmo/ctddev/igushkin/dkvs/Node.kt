@@ -11,12 +11,7 @@ import java.util.logging.Level
 import java.util.logging.Logger
 import kotlin.concurrent.thread
 import kotlin.concurrent.timer
-
-val logger = Logger.getAnonymousLogger()
-
-fun logMsg(s: String) = logger.log(Level.INFO, "- $s")
-fun logPxs(s: String) = logger.log(Level.INFO, "# $s")
-fun logErr(s: String, t: Throwable? = null) = logger.log(Level.WARNING, "X $s", t)
+import kotlin.properties.Delegates
 
 /**
  * @param id Node identifier which should be unique across the system instance.
@@ -34,11 +29,13 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private val clientSender = { to: Int, s: String -> sendToClient(to, s) }
     private val allIds = globalConfig.ids
 
-    private val localReplica = Replica(id, sender, clientSender, allIds)
-    private val localLeader = Leader(id, sender, allIds, allIds)
-    private val localAcceptor = Acceptor(id, sender)
+    private val persistence = Persistence(id)
+    private val localReplica = Replica(id, sender, clientSender, allIds, persistence)
+    private val localLeader = Leader(id, sender, allIds, allIds, persistence)
+    private val localAcceptor = Acceptor(id, sender, persistence)
 
     override public fun run() {
+
         if (started)
             throw IllegalStateException("Cannot start a node which has already been started.")
 
@@ -60,7 +57,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
             while (!stopping)
                 try {
                     val client = serverSocket.accept()
-                    logMsg("Accepted connection from ${client.getRemoteSocketAddress()}.")
+                    NodeLogger.logConn("Accepted connection from ${client.getRemoteSocketAddress()}.")
                     /** Spawn communication thread. */
                     thread { handleRequest(client) }
                 } catch (ignored: SocketException) {
@@ -129,7 +126,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
                 if (!it.aliveIn) {
                     it.input?.close()
                     faultyNodes.add(i)
-                    logMsg("Node $i is faulty, closing its connection.")
+                    NodeLogger.logConn("Node $i is faulty, closing its connection.")
                 }
                 it.aliveIn = false
             }
@@ -194,7 +191,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
             }
         } catch (ignored: SocketException) {
         } catch (e: IOException) {
-            logErr("I/O error", e)
+            NodeLogger.logErr("I/O error", e)
         }
 
     }
@@ -207,7 +204,8 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private fun handleMessages() {
         forever {
             val m = eventQueue.take()
-            logMsg("Handling message: $m")
+            if (m !is PingMessage && m !is PongMessage)
+                NodeLogger.logMsgHandle(m)
             when (m) {
                 is ReplicaMessage  -> localReplica.receiveMessage(m)
                 is LeaderMessage   -> localLeader.receiveMessage(m)
@@ -228,12 +226,13 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
      * another nodes into [eventQueue].
      */
     private fun listenToNode(reader: BufferedReader, nodeId: Int) {
-        logMsg("Started listening to node $nodeId")
+        NodeLogger.logConn("Started listening to node $nodeId")
         nodes[nodeId]!!.aliveIn = true
         dispatch(reader) { parts ->
             nodes[nodeId]!!.aliveIn = true
             val message = Message.parse(parts)
-            logMsg("Received from $nodeId: $message")
+            if (message !is PingMessage && message !is PongMessage)
+                NodeLogger.logMsgIn(message, nodeId)
 
             if (message is PingMessage)
                 send(nodeId, PongMessage())
@@ -248,19 +247,19 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
      * a client into [eventQueue].
      */
     private fun listenToClient(reader: BufferedReader, clientId: Int) {
-        logMsg("Client $clientId connected.")
+        NodeLogger.logConn("Client $clientId connected.")
         try {
             dispatch(reader) { parts ->
                 val message = ClientRequest.parse(clientId, parts)
                 receiveClientRequest(message)
             }
         } catch (e: SocketException) {
-            logErr("Lost connection to Client $clientId: $e}")
+            NodeLogger.logConn("Lost connection to Client $clientId: $e}")
         }
     }
 
     private fun receiveClientRequest(request: ClientRequest) {
-        logMsg("Message from client ${request.fromId}: ${request}")
+        NodeLogger.logMsgIn(request, request.fromId)
         if (request is PingRequest)
             sendToClient(request.fromId, "PONG")
         else
@@ -284,7 +283,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
                 node.resetOutput()
                 val socket = node.output!!
                 socket.connect(InetSocketAddress(address, port))
-                logMsg("Connected to node $nodeId.")
+                NodeLogger.logConn("Connected to node $nodeId.")
                 sendFirst(nodeId, NodeMessage(id))
                 val writer = socket.getOutputStream().writer(CHARSET)
 
@@ -295,11 +294,12 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
                     val m = nodes[nodeId].messages.take()
                     try {
-                        logMsg("Sending to $nodeId: $m")
+                        if (m !is PingMessage && m !is PongMessage)
+                            NodeLogger.logMsgOut(m, nodeId)
                         writer.write("$m\n")
                         writer.flush()
                     } catch (ioe: IOException) {
-                        logErr("Couldn't send $m to $nodeId. Retrying.")
+                        NodeLogger.logConn("Couldn't send $m to $nodeId. Retrying.")
                         sendFirst(nodeId, m)
                         break
                     }
@@ -307,7 +307,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
             } catch (ignored: ConnectException) {
             } catch (e: SocketException) {
-                logErr("Connection to node $nodeId lost.", e)
+                NodeLogger.logErr("Connection to node $nodeId lost.", e)
             }
         }
     }
@@ -319,11 +319,11 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         forever {
             val m = queue.take()
             try {
-                logMsg("Sending to client $clientId: $m")
+                NodeLogger.logMsgOut(m, clientId)
                 writer write "$m\n"
                 writer.flush()
             } catch (ioe: IOException) {
-                logErr("Couldn't send a message. Retrying.")
+                NodeLogger.logErr("Couldn't send a message. Retrying.", ioe)
                 nodes[clientId].messages.addFirst(m)
             }
         }

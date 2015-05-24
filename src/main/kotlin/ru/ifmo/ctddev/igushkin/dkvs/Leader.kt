@@ -1,5 +1,6 @@
 package ru.ifmo.ctddev.igushkin.dkvs
 
+import java.util.HashMap
 import java.util.HashSet
 import kotlin.test.todo
 
@@ -7,22 +8,25 @@ import kotlin.test.todo
  * Created by Sergey on 21.05.2015.
  */
 
-fun isInitialLeader(l: Leader) = l.id == 1
-
 public class Leader(val id: Int,
                     val send: (Int, Message) -> Unit,
                     val replicaIds: List<Int>,
-                    val acceptorIds: List<Int>
+                    val acceptorIds: List<Int>,
+                    val persistence: Persistence
 ) {
     public volatile var active: Boolean = true; private set
-    public volatile var currentBallot: Ballot = Ballot(1, id); private set
+    public volatile var currentBallot: Ballot = Ballot(persistence.lastBallotNum, id);
+        private set
 
+    /**
+     * Should be called by a [Leader]'s container, when everything else is ready.
+     */
     public fun afterRun() {
         scouting(currentBallot)
     }
 
-    //todo reduce state
-    private val proposals = hashMapOf<Int, ClientRequest>()
+    //todo Garbage collection haven't been implemented yet
+    private val proposals = HashMap<Int, OperationDescriptor>()
 
     public fun receiveMessage(message: LeaderMessage) {
         when (message) {
@@ -37,7 +41,7 @@ public class Leader(val id: Int,
             is PhaseOneResponse -> {
                 val ballot = message.originalBallot
                 val scout = scouts[ballot]
-                scout?.receiveResonse(message)
+                scout?.receiveResponse(message)
             }
             is PhaseTwoResponse -> {
                 val proposal = message.proposal
@@ -48,15 +52,15 @@ public class Leader(val id: Int,
     }
 
     private fun preempted(b: Ballot) {
-        logPxs("PREEMPTED: there's ballot $b")
+        NodeLogger.logProtocol("PREEMPTED: there's ballot $b")
         if (b > currentBallot) {
             active = false
-            currentBallot = Ballot(b.ballotNum + 1, id)
-            logPxs("WAITING for ${b.leaderId} to fail.")
+            currentBallot = Ballot(persistence.nextBallotNum(), id)
+            persistence.saveToDisk("ballot $currentBallot")
+            NodeLogger.logProtocol("WAITING for ${b.leaderId} to fail")
             onFault = { faulty ->
                 if (b.leaderId in faulty) {
-                    logMsg("Node ${b.leaderId} failed.")
-                    logPxs("SCOUT started for ballot $currentBallot")
+                    NodeLogger.logProtocol("SCOUT started for ballot $currentBallot")
                     scouting(currentBallot)
                     onFault = null
                 }
@@ -65,7 +69,7 @@ public class Leader(val id: Int,
     }
 
     private fun adopted(ballot: Ballot, pvalues: Map<Int, AcceptProposal>) {
-        logPxs("ADOPTED")
+        NodeLogger.logProtocol("ADOPTED with ballot $ballot")
         for ((slot, pval) in pvalues) {
             proposals[slot] = pval.command
         }
@@ -100,7 +104,7 @@ public class Leader(val id: Int,
     private val commanders = hashMapOf<AcceptProposal, Commander>()
 
     private fun command(proposal: AcceptProposal) {
-        logPxs("COMMANDER started for $proposal")
+        NodeLogger.logProtocol("COMMANDER started for $proposal")
         commanders[proposal] = Commander(proposal)
         acceptorIds.forEach { send(it, PhaseTwoRequest(id, proposal)) }
     }
@@ -111,7 +115,7 @@ public class Leader(val id: Int,
         val waitFor = HashSet(acceptorIds)
         val proposals = hashMapOf<Int, AcceptProposal>()
 
-        fun receiveResonse(response: PhaseOneResponse) {
+        fun receiveResponse(response: PhaseOneResponse) {
             if (response.ballotNum != b) {
                 scouts remove b
                 preempted(response.ballotNum)
@@ -142,8 +146,7 @@ public class Leader(val id: Int,
     private volatile var onFault: ((HashSet<Int>) -> Unit)? = null
 
     public  fun notifyFault(nodes: HashSet<Int>) {
-        if (onFault != null)
-            onFault!!(nodes)
+        onFault?.invoke(nodes)
     }
 }
 

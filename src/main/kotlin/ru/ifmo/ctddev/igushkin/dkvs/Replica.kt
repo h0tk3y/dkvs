@@ -4,13 +4,16 @@ import java.io.File
 import java.io.FileWriter
 import java.util.ArrayList
 import java.util.HashMap
+import java.util.HashSet
+import java.util.Random
+import kotlin.util.measureTimeMillis
 
 /**
  * Represents `replica` of Multi-Paxos protocol.
  *
  * For complete description, see [Paxos Made Moderately Complex]
  * [http://www.cs.cornell.edu/courses/cs7412/2011sp/paxos.pdf]
- *
+ *`
  * @param id Replica identifier, unique across the protocol instance.
  * @param send (nodeId, message) Way to send messages to the other nodes.
  * @param leaderIds List of ids which the replica will ask for decisions.
@@ -30,67 +33,30 @@ import java.util.HashMap
 public class Replica(val id: Int,
                      val send: (nodeId: Int, Message) -> Unit,
                      val sendToClient: (clientId: Int, text: String) -> Unit,
-                     val leaderIds: List<Int>
+                     val leaderIds: List<Int>,
+                     val persistence: Persistence
 ) {
 
-    private val persistenceFileName = "dkvs_$id.log"
-    private val diskPersistence = FileWriter(persistenceFileName, true).buffered()
-
-    private fun saveToDisk(data: Any) {
-        with(diskPersistence) {
-            write(data.toString())
-            newLine()
-            flush()
-        }
-    }
-
-    private val state: MutableMap<String, String> = readStateFromDisk()
-
-    private fun readStateFromDisk(): HashMap<String, String> {
-        if (!File(persistenceFileName).exists())
-            return HashMap()
-        val reader = File(persistenceFileName).reader().buffered()
-        val lines = ArrayList<String>()
-        for (l in reader.lines())
-            lines add l
-        val result = hashMapOf<String, String>()
-        val removedKeys = hashSetOf<String>()
-        for (l in lines.reverse()) {
-            val parts = l.split(' ')
-            val key = parts[1]
-            if (key in result || key in removedKeys)
-                continue
-            when (parts[0]) {
-                "set"    -> {
-                    result[key] = parts[2..parts.lastIndex].join(" ")
-                }
-                "delete" -> {
-                    removedKeys add key
-                }
-            }
-        }
-        return result
-    }
+    private val state: MutableMap<String, String> = persistence.keyValueStorage!!
 
     public volatile var slotIn: Int = 0; private set
     public volatile var slotOut: Int = 0; private set
 
-    //refactor
-    private val awaitingClients = hashMapOf<ClientRequest, Int>()
+    private val awaitingClients = HashMap<OperationDescriptor, Int>()
 
-    private val requests = linkedListOf<ClientRequest>()
-    private val proposals = hashMapOf<Int, ClientRequest>()
-    private val decisions = hashMapOf<Int, ClientRequest>()
+    private val requests = HashSet<OperationDescriptor>()
+    private val proposals = HashMap<Int, OperationDescriptor>()
+    private val decisions = HashMap<Int, OperationDescriptor>()
 
-    private val performed = hashSetOf<ClientRequest>()
+    private val performed = HashSet<OperationDescriptor>()
 
-    private fun perform(c: ClientRequest) {
-        logPxs("PERFORMING $c at $slotOut")
+    private fun perform(c: OperationDescriptor) {
+        NodeLogger.logProtocol("PERFORMING $c at $slotOut")
         if (c in performed)
             return
-        when (c) {
+        when (c.request) {
             is SetRequest    -> {
-                state[c.key] = c.value
+                state[c.request.key] = c.request.value
                 val awaitingClient = awaitingClients[c]
                 if (awaitingClient != null) {
                     sendToClient(awaitingClient, "STORED")
@@ -98,7 +64,7 @@ public class Replica(val id: Int,
                 }
             }
             is DeleteRequest -> {
-                val result = (state remove c.key) != null
+                val result = (state remove c.request.key) != null
                 val awaitingClient = awaitingClients[c]
                 if (awaitingClient != null) {
                     sendToClient(awaitingClient, if (result) "DELETED" else "NOT_FOUND")
@@ -107,14 +73,14 @@ public class Replica(val id: Int,
             }
         }
         performed add c
-        if (c !is GetRequest)
-            saveToDisk(c)
+        if (c.request !is GetRequest)
+            persistence.saveToDisk(c.toString())
     }
 
     private fun propose() {
         while (requests.isNotEmpty()) {
             val c = requests.first()
-            logPxs("PROPOSING $c to $slotIn")
+            NodeLogger.logProtocol("PROPOSING $c to $slotIn")
             if (slotIn !in decisions) {
                 requests remove c
                 proposals[slotIn] = c
@@ -138,11 +104,12 @@ public class Replica(val id: Int,
                                  "NOT_FOUND")
             }
             is ClientRequest   -> {
-                requests add message
-                awaitingClients[message] = message.fromId
+                val op = OperationDescriptor(message, id)
+                requests add op
+                awaitingClients[op] = message.fromId
             }
             is DecisionMessage -> {
-                logPxs("DECISION $message")
+                NodeLogger.logProtocol("DECISION $message")
                 val slot = message.slot
                 decisions.put(slot, message.request)
 

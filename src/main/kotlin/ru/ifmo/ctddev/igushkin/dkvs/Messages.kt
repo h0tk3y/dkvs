@@ -3,6 +3,7 @@ package ru.ifmo.ctddev.igushkin.dkvs
 import java.util.HashSet
 import java.util.LinkedHashMap
 import java.util.LinkedHashSet
+import java.util.Random
 
 /**
  * Messages between [Node]s and Clients.
@@ -20,8 +21,8 @@ public abstract class Message() {
                 "node"     -> NodeMessage(parts[1].toInt())
                 "ping"     -> PingMessage()
                 "pong"     -> PongMessage()
-                "decision" -> DecisionMessage(parts[1].toInt(), ClientRequest.parse(-1, parts[2..p]))
-                "propose"  -> ProposeMessage(parts[1].toInt(), parts[2].toInt(), ClientRequest.parse(-1, parts[3..p]))
+                "decision" -> DecisionMessage(parts[1].toInt(), OperationDescriptor.parse(parts[2..p]))
+                "propose"  -> ProposeMessage(parts[1].toInt(), parts[2].toInt(), OperationDescriptor.parse(parts[3..p]))
                 "p1a"      -> PhaseOneRequest(parts[1].toInt(), Ballot.parse(parts[2]))
                 "p2a"      -> PhaseTwoRequest(parts[1].toInt(), AcceptProposal.parse(parts[2..p]))
                 "p1b"      -> PhaseOneResponse.parse(parts)
@@ -62,7 +63,7 @@ public class PongMessage() : Message() {
  */
 public abstract class ReplicaMessage(val fromId: Int) : Message()
 
-public class DecisionMessage(val slot: Int, val request: ClientRequest) : ReplicaMessage(-1) {
+public class DecisionMessage(val slot: Int, val request: OperationDescriptor) : ReplicaMessage(-1) {
     override fun toString() = "decision $slot $request"
 }
 
@@ -77,7 +78,6 @@ public class DecisionMessage(val slot: Int, val request: ClientRequest) : Replic
  */
 public abstract class ClientRequest(clientId: Int) : ReplicaMessage(clientId) {
 
-    //fixme Distinguish same commands
     companion object {
         public fun parse(clientId: Int, parts: Array<String>): ClientRequest =
                 when (parts[0]) {
@@ -102,19 +102,18 @@ public data class DeleteRequest(fromId: Int, val key: String) : ClientRequest(fr
     override fun toString() = "delete $key"
 }
 
-//refactor Join with [PingMessage] may be?
 public data class PingRequest(fromId: Int) : ClientRequest(fromId)
 
 //----- Leader messages -----
 
 public abstract class LeaderMessage(val fromId: Int) : Message()
 
-public class ProposeMessage(fromId: Int, val slot: Int, val request: ClientRequest) : LeaderMessage(fromId) {
+public data class ProposeMessage(fromId: Int, val slot: Int, val request: OperationDescriptor) : LeaderMessage(fromId) {
     override fun toString() = "propose $fromId $slot $request"
 }
 
 /**
- * Sent to [Scout] from [Acceptor] in response to [PhaseOneRequest].
+ * Sent to [Leader.Scout] from [Acceptor] in response to [PhaseOneRequest].
  */
 public class PhaseOneResponse(fromId: Int,
                               val originalBallot: Ballot,
@@ -137,7 +136,7 @@ public class PhaseOneResponse(fromId: Int,
     }
 }
 
-val payloadSplitter = " _#_ "
+val payloadSplitter = " ### "
 
 /**
  * Sent to [Scout] from [Acceptor] in response to [PhaseTwoRequest].
@@ -175,4 +174,24 @@ public class PhaseTwoRequest(fromId: Int, val payload: AcceptProposal) : Accepto
  */
 public class TextMessage(val text: String) : Message() {
     override fun toString() = text
+}
+
+/**
+ * Attaching a unique [operationId] to [ClientRequest]s to distinguish them.
+ */
+public data class OperationDescriptor private (val operationId: Int,
+                                          val request: ClientRequest
+) {
+    public constructor(request: ClientRequest, nodeId: Int) : this(
+            nextId * globalConfig.nodesCount + nodeId, request
+    )
+
+    companion object {
+        public fun parse(parts: Array<String>): OperationDescriptor =
+                OperationDescriptor(parts[0].substring(1, parts[0].length()-1).toInt(), ClientRequest.parse(-1, parts[1..parts.lastIndex]));
+
+        private volatile var nextId: Int = 0; get() = $nextId++
+    }
+
+    override fun toString() = "<$operationId> $request"
 }
