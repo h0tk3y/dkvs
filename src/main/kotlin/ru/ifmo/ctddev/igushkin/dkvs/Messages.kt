@@ -109,22 +109,22 @@ public data class PingRequest(fromId: Int) : ClientRequest(fromId)
 /**
  * Sub-hierarchy of messages addressed to [Leader]s.
  */
-public abstract class LeaderMessage(val fromId: Int) : Message
+public trait LeaderMessage : Message
 
 /**
  * Sent by [Replica] and contains a proposition of [request] to [slot].
  */
-public data class ProposeMessage(fromId: Int, val slot: Int, val request: OperationDescriptor) : LeaderMessage(fromId) {
+public data class ProposeMessage(val fromId: Int, val slot: Int, val request: OperationDescriptor) : LeaderMessage {
     override fun toString() = "propose $fromId $slot $request"
 }
 
 /**
  * Sent to [Leader.Scout] from [Acceptor] in response to [PhaseOneRequest].
  */
-public class PhaseOneResponse(fromId: Int,
+public class PhaseOneResponse(val fromId: Int,
                               val originalBallot: Ballot,
                               val ballotNum: Ballot,
-                              val pvalues: Collection<AcceptProposal>) : LeaderMessage(fromId) {
+                              val pvalues: Collection<AcceptProposal>): LeaderMessage {
     override fun toString() = "p1b $fromId $originalBallot $ballotNum ${pvalues.joinToString(payloadSplitter)}"
 
     companion object {
@@ -147,12 +147,8 @@ val payloadSplitter = " ### "
 /**
  * Sent to [Leader] from [Acceptor] in response to [PhaseTwoRequest].
  */
-public class PhaseTwoResponse(fromId: Int, val ballot: Ballot, val proposal: AcceptProposal) : LeaderMessage(fromId) {
+public class PhaseTwoResponse(val fromId: Int, val ballot: Ballot, val proposal: AcceptProposal) : LeaderMessage {
     override fun toString() = "p2b $fromId $ballot $proposal"
-}
-
-public class SlotOutMessage(val fromId: Int, val slotOut: Int): Message {
-    override fun toString() = "slotOut $fromId $slotOut"
 }
 
 //----- Acceptor messages -----
@@ -160,13 +156,13 @@ public class SlotOutMessage(val fromId: Int, val slotOut: Int): Message {
 /**
  * Sub-hierarchy of messages sent to [Acceptor]s.
  */
-public abstract class AcceptorMessage(val fromId: Int, val ballotNum: Ballot) : Message
+public trait AcceptorMessage : Message
 
 /**
  * Sent by [Leader.Scout] to [Acceptor].
  * Normal response is [PhaseOneResponse].
  */
-public class PhaseOneRequest(fromId: Int, ballotNum: Ballot) : AcceptorMessage(fromId, ballotNum) {
+public class PhaseOneRequest(val fromId: Int, val ballotNum: Ballot) : AcceptorMessage {
     override fun toString() = "p1a $fromId $ballotNum"
 }
 
@@ -174,8 +170,18 @@ public class PhaseOneRequest(fromId: Int, ballotNum: Ballot) : AcceptorMessage(f
  * Sent by active [Leader] to [Acceptor].
  * Normal response is [PhaseTwoResponse].
  */
-public class PhaseTwoRequest(fromId: Int, val payload: AcceptProposal) : AcceptorMessage(fromId, payload.ballotNum) {
+public class PhaseTwoRequest(val fromId: Int, val payload: AcceptProposal) : AcceptorMessage {
     override fun toString() = "p2a $fromId $payload"
+}
+
+//-------------------------------
+
+/**
+ * Sent by [Replica]s to inform [Leader]s and [Acceptor]s of its [Replica.slotOut],
+ * which is used for garbage collection.
+ */
+public class SlotOutMessage(val fromId: Int, val slotOut: Int): LeaderMessage, AcceptorMessage {
+    override fun toString() = "slotOut $fromId $slotOut"
 }
 
 //-------------------------------

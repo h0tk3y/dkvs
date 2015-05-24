@@ -14,9 +14,13 @@ import kotlin.concurrent.timer
 import kotlin.properties.Delegates
 
 /**
- * @param id Node identifier which should be unique across the system instance.
+ * Represents a single independent unit of DKVS/Multi-Paxos.
+ * Given 2f+1 [Node]s run simultaneously, in connection with each other,
+ * the protocol is tolerant to the fail of 'f' nodes.
  *
  * A node contains one [Replica], one [Leader] and one [Acceptor] in itself.
+ *
+ * @param id Node identifier which should be unique across the system instance.
  */
 public class Node(val id: Int) : Runnable, AutoCloseable {
 
@@ -215,18 +219,15 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         while (!stopping) {
             val m = eventQueue.take()
             NodeLogger.logMsgHandle(m)
-            when (m) {
-                is SlotOutMessage  -> {
-                    localLeader.handleSlotOut(m)
-                    localAcceptor.handleSlotOut(m)
-                }
-
-                is ReplicaMessage  -> localReplica.receiveMessage(m)
-                is LeaderMessage   -> localLeader.receiveMessage(m)
-                is AcceptorMessage -> localAcceptor.receiveMessage(m)
-            }
+            if (m is ReplicaMessage)
+                localReplica.receiveMessage(m)
+            if (m is LeaderMessage)
+                localLeader.receiveMessage(m)
+            if (m is AcceptorMessage)
+                localAcceptor.receiveMessage(m)
         }
     }
+
 
     /**
      * Messages from this queue are polled and handled by handleMessages.

@@ -9,7 +9,9 @@ import java.util.Random
 import kotlin.util.measureTimeMillis
 
 /**
- * Represents `replica` of Multi-Paxos protocol.
+ * Represents Replica of Multi-Paxos protocol.
+ * Replicas are bridges between Clients and abstraction layer which
+ * actually makes consensus decisions.
  *
  * For complete description, see [Paxos Made Moderately Complex]
  * [http://www.cs.cornell.edu/courses/cs7412/2011sp/paxos.pdf]

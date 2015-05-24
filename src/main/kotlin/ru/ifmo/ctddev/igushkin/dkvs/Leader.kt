@@ -5,7 +5,9 @@ import java.util.HashSet
 import kotlin.test.todo
 
 /**
- * Represents `replica` of Multi-Paxos protocol.
+ * Represents Leader of Multi-Paxos protocol.
+ * Leaders are an intermediate layer between [Replica]s and [Acceptor]s.
+ * Key part of a Leader is its [currentBallot].
  *
  * For complete description, see [Paxos Made Moderately Complex]
  * [http://www.cs.cornell.edu/courses/cs7412/2011sp/paxos.pdf]
@@ -50,6 +52,14 @@ public class Leader(val id: Int,
                 val commander = commanders[proposal]
                 commander?.receiveResponse(message)
             }
+            is SlotOutMessage   -> {
+                val replicaId = message.fromId
+                val minSlotOut = slotOuts.values().min()
+                slotOuts[replicaId] = message.slotOut
+                val newMinSlotOut = slotOuts.values().min()
+                if (newMinSlotOut != minSlotOut)
+                    cleanup()
+            }
         }
     }
 
@@ -81,6 +91,14 @@ public class Leader(val id: Int,
         }
     }
 
+    private fun cleanup() {
+        val slot = slotOuts.values().min()!!
+        NodeLogger.logProtocol("LEADER CLEANUP to slotOut $slot")
+        for (i in proposals.keySet().filter { it < slot }) {
+            proposals remove i
+        }
+    }
+
     //----- Commander -----
 
     inner class Commander(val proposal: AcceptProposal) {
@@ -92,7 +110,7 @@ public class Leader(val id: Int,
                 commanders remove proposal
             } else {
                 waitFor remove response.fromId
-                if (waitFor.size() < (acceptorIds.size()+1) / 2) {
+                if (waitFor.size() < (acceptorIds.size() + 1) / 2) {
                     replicaIds.forEach {
                         send(it, DecisionMessage(response.proposal.slot,
                                                  response.proposal.command))
@@ -103,25 +121,7 @@ public class Leader(val id: Int,
         }
     }
 
-    private val slotOuts = HashMap(replicaIds.map{ it to 0}.toMap())
-
-    public fun handleSlotOut(message: SlotOutMessage) {
-        val minSlotOut = slotOuts.values().min()
-        val replicaId = message.fromId
-        slotOuts[replicaId] = message.slotOut
-        val newMinSlotOut = slotOuts.values().min()
-        if (newMinSlotOut != minSlotOut) {
-            cleanup()
-        }
-    }
-
-    private fun cleanup() {
-        val slot = slotOuts.values().min()!!
-        NodeLogger.logProtocol("LEADER CLEANUP to slotOut $slot")
-        for (i in proposals.keySet().filter{ it < slot }) {
-            proposals remove i
-        }
-    }
+    private val slotOuts = HashMap(replicaIds.map { it to 0 }.toMap())
 
     private val commanders = hashMapOf<AcceptProposal, Commander>()
 
@@ -141,14 +141,13 @@ public class Leader(val id: Int,
             if (response.ballotNum != b) {
                 scouts remove b
                 preempted(response.ballotNum)
-            }
-            else {
+            } else {
                 response.pvalues.forEach {
                     if (it.slot !in proposals || it.ballotNum > proposals[it.slot].ballotNum)
                         proposals[it.slot] = it
                 }
                 waitFor remove response.fromId
-                if (waitFor.size() < (acceptorIds.size()+1) / 2) {
+                if (waitFor.size() < (acceptorIds.size() + 1) / 2) {
                     scouts remove b
                     adopted(b, proposals)
                 }
@@ -167,7 +166,7 @@ public class Leader(val id: Int,
 
     private volatile var onFault: ((HashSet<Int>) -> Unit)? = null
 
-    public  fun notifyFault(nodes: HashSet<Int>) {
+    public fun notifyFault(nodes: HashSet<Int>) {
         onFault?.invoke(nodes)
     }
 }

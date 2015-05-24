@@ -4,8 +4,11 @@ import java.util.HashMap
 
 /**
  * Represents [Acceptor] part of Multi-Paxos protocol.
+ * Acceptors contain fault-tolerant memory of the protocol and
+ * actually decide on current [Leader] and the proposals accepted.
  *
- * Created by Sergey on 21.05.2015.
+ * For complete description, see [Paxos Made Moderately Complex]
+ * [http://www.cs.cornell.edu/courses/cs7412/2011sp/paxos.pdf]
  */
 
 public class Acceptor(val id: Int,
@@ -29,24 +32,22 @@ public class Acceptor(val id: Int,
                 send(message.fromId, PhaseOneResponse(id, message.ballotNum, ballotNumber, accepted.values()))
             }
             is PhaseTwoRequest -> {
-                if (message.ballotNum == ballotNumber)
+                if (message.payload.ballotNum == ballotNumber)
                     accepted[message.payload.slot] = message.payload
                 send(message.fromId, PhaseTwoResponse(id, ballotNumber, message.payload))
+            }
+            is SlotOutMessage -> {
+                val minSlotOut = slotOuts.values().min()
+                val replicaId = message.fromId
+                slotOuts[replicaId] = message.slotOut
+                val newMinSlotOut = slotOuts.values().min()
+                if (newMinSlotOut != minSlotOut)
+                    cleanup()
             }
         }
     }
 
     private val slotOuts = HashMap(replicaIds.map{ it to 0}.toMap())
-
-    public fun handleSlotOut(message: SlotOutMessage) {
-        val minSlotOut = slotOuts.values().min()
-        val replicaId = message.fromId
-        slotOuts[replicaId] = message.slotOut
-        val newMinSlotOut = slotOuts.values().min()
-        if (newMinSlotOut != minSlotOut) {
-            cleanup()
-        }
-    }
 
     private fun cleanup() {
         val slot = slotOuts.values().min()!!
