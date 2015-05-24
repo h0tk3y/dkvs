@@ -204,8 +204,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private fun handleMessages() {
         forever {
             val m = eventQueue.take()
-            if (m !is PingMessage && m !is PongMessage)
-                NodeLogger.logMsgHandle(m)
+            NodeLogger.logMsgHandle(m)
             when (m) {
                 is ReplicaMessage  -> localReplica.receiveMessage(m)
                 is LeaderMessage   -> localLeader.receiveMessage(m)
@@ -216,7 +215,6 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
     /**
      * Messages from this queue are polled and handled by handleMessages.
-     *
      * Every communication thread puts its received messages into the queue.
      */
     val eventQueue = LinkedBlockingDeque<Message>()
@@ -231,8 +229,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         dispatch(reader) { parts ->
             nodes[nodeId]!!.aliveIn = true
             val message = Message.parse(parts)
-            if (message !is PingMessage && message !is PongMessage)
-                NodeLogger.logMsgIn(message, nodeId)
+            NodeLogger.logMsgIn(message, nodeId)
 
             if (message is PingMessage)
                 send(nodeId, PongMessage())
@@ -294,12 +291,11 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
                     val m = nodes[nodeId].messages.take()
                     try {
-                        if (m !is PingMessage && m !is PongMessage)
-                            NodeLogger.logMsgOut(m, nodeId)
+                        NodeLogger.logMsgOut(m, nodeId)
                         writer.write("$m\n")
                         writer.flush()
                     } catch (ioe: IOException) {
-                        NodeLogger.logConn("Couldn't send $m to $nodeId. Retrying.")
+                        NodeLogger.logErr("Couldn't send $m to $nodeId. Retrying.", ioe)
                         sendFirst(nodeId, m)
                         break
                     }

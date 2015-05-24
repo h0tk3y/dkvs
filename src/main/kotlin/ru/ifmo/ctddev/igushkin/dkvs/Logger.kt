@@ -13,15 +13,18 @@ public open class NodeLogger() {
     private val logger = Logger.getLogger("Node")
 
     public fun logMsgIn(m: Message, fromId: Int) {
-        logger.log(Level.INFO, ">> from $fromId: $m")
+        if (m !is PingMessage && m !is PongMessage)
+            logger.log(Level.INFO, ">> from $fromId: $m")
     }
 
     public fun logMsgOut(m: Message, toId: Int) {
-        logger.log(Level.INFO, "<< to $toId: $m")
+        if (m !is PingMessage && m !is PongMessage)
+            logger.log(Level.INFO, "<< to $toId: $m")
     }
 
     public fun logMsgHandle(m: Message) {
-        logger.log(Level.INFO, ".. handling: $m")
+        if (m !is PingMessage && m !is PongMessage)
+            logger.log(Level.INFO, ".. handling: $m")
     }
 
     public fun logProtocol(s: String) {
