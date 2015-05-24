@@ -251,7 +251,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
                 receiveClientRequest(message)
             }
         } catch (e: SocketException) {
-            NodeLogger.logConn("Lost connection to Client $clientId: $e}")
+            NodeLogger.logConn("Lost connection to Client $clientId: $e")
         }
     }
 

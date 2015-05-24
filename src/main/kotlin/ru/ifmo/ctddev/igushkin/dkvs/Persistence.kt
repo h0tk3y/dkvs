@@ -20,6 +20,8 @@ public class Persistence(val nodeId: Int) {
     public volatile var lastBallotNum: Int = 0; private set
     public volatile var keyValueStorage: HashMap<String, String>? = null
 
+    public volatile var lastSlotOut: Int = 0;
+
     public fun nextBallotNum(): Int {
         return ++lastBallotNum
     }
@@ -37,13 +39,17 @@ public class Persistence(val nodeId: Int) {
 
             for (l in lines.reverse()) {
                 val parts = l.split(' ')
-                val key = if (1 in parts.indices) parts[1] else null
                 when (parts[0]) {
-                    "set"    -> {
-                        storage[key] = parts[2..parts.lastIndex].join(" ")
-                    }
-                    "delete" -> {
-                        removedKeys add key
+                    "ballot" -> lastBallotNum = Math.max(lastBallotNum, Ballot.parse(parts[1]).ballotNum)
+                    "slot" -> {
+                        val key = if (4 in parts.indices) parts[4] else null
+                        lastSlotOut = Math.max(lastSlotOut, parts[1].toInt())
+                        if (key in storage || key in removedKeys)
+                            continue
+                        when (parts[3]) {
+                            "set" -> storage[key] = parts[5..parts.lastIndex].join(" ")
+                            "delete" -> removedKeys add key
+                        }
                     }
                 }
             }

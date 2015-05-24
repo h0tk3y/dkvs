@@ -39,8 +39,8 @@ public class Replica(val id: Int,
 
     private val state: MutableMap<String, String> = persistence.keyValueStorage!!
 
-    public volatile var slotIn: Int = 0; private set
-    public volatile var slotOut: Int = 0; private set
+    public volatile var slotOut: Int = persistence.lastSlotOut+1; private set
+    public volatile var slotIn: Int = slotOut; private set
 
     private val awaitingClients = HashMap<OperationDescriptor, Int>()
 
@@ -74,7 +74,7 @@ public class Replica(val id: Int,
         }
         performed add c
         if (c.request !is GetRequest)
-            persistence.saveToDisk(c.toString())
+            persistence.saveToDisk("slot $slotOut $c")
     }
 
     private fun propose() {
