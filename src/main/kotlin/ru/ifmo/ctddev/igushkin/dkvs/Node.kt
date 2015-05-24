@@ -105,8 +105,10 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
     private fun pingIfIdle() {
         timer(period = globalConfig.timeout / 4) {
-            nodes.entrySet().filter { it.key != id &&
-                                      it.value.ready}.forEach { p ->
+            nodes.entrySet().filter {
+                it.key != id &&
+                it.value.ready
+            }.forEach { p ->
                 val (id, n) = p
                 if (!n.aliveOut) {
                     send(id, PingMessage())
@@ -143,7 +145,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         }
     }
 
-    private fun sendFirst(to:Int, message: Message) {
+    private fun sendFirst(to: Int, message: Message) {
         if (to == id)
             eventQueue addFirst message
         else
@@ -210,11 +212,11 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
      * [eventQueue] and handles them by forwarding them to the proper receivers.
      */
     private fun handleMessages() {
-        forever {
+        while (!stopping) {
             val m = eventQueue.take()
             NodeLogger.logMsgHandle(m)
             when (m) {
-                is SlotOutMessage -> {
+                is SlotOutMessage  -> {
                     localLeader.handleSlotOut(m)
                     localAcceptor.handleSlotOut(m)
                 }
@@ -239,7 +241,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private fun listenToNode(reader: BufferedReader, nodeId: Int) {
         NodeLogger.logConn("Started listening to node $nodeId")
         nodes[nodeId]!!.aliveIn = true
-        dispatch(reader) { parts ->
+        forSplittedLines(reader) { parts ->
             nodes[nodeId]!!.aliveIn = true
             val message = Message.parse(parts)
             NodeLogger.logMsgIn(message, nodeId)
@@ -259,7 +261,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private fun listenToClient(reader: BufferedReader, clientId: Int) {
         NodeLogger.logConn("Client $clientId connected.")
         try {
-            dispatch(reader) { parts ->
+            forSplittedLines(reader) { parts ->
                 val message = ClientRequest.parse(clientId, parts)
                 if (message != null)
                     receiveClientRequest(message)
@@ -326,7 +328,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         val entry = clients[clientId]!!
         val queue = entry.messages
         val writer = entry.input!!.getOutputStream().writer()
-        forever {
+        while (!stopping) {
             val m = queue.take()
             try {
                 NodeLogger.logMsgOut(m, clientId)

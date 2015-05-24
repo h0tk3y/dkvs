@@ -3,7 +3,6 @@ package ru.ifmo.ctddev.igushkin.dkvs
 import java.util.HashSet
 import java.util.LinkedHashMap
 import java.util.LinkedHashSet
-import java.util.Random
 
 /**
  * Messages between [Node]s and Clients.
