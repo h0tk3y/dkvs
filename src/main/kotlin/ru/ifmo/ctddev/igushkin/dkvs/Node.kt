@@ -32,7 +32,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private val persistence = Persistence(id)
     private val localReplica = Replica(id, sender, clientSender, allIds, persistence)
     private val localLeader = Leader(id, sender, allIds, allIds, persistence)
-    private val localAcceptor = Acceptor(id, sender, persistence)
+    private val localAcceptor = Acceptor(id, sender, allIds, persistence)
 
     override public fun run() {
 
@@ -52,6 +52,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
         monitorFaults()
         pingIfIdle()
+        tickReplica()
 
         thread {
             while (!stopping)
@@ -136,6 +137,12 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         }
     }
 
+    private fun tickReplica() {
+        timer(period = globalConfig.timeout) {
+            localReplica.tick()
+        }
+    }
+
     private fun sendFirst(to:Int, message: Message) {
         if (to == id)
             eventQueue addFirst message
@@ -181,11 +188,14 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
                     // Since we've already read a message, we have to handle it on the spot
                     val firstMessage = ClientRequest.parse(newClientId, parts)
-                    receiveClientRequest(firstMessage)
+                    if (firstMessage != null) {
+                        receiveClientRequest(firstMessage)
 
-                    /** Spawn communication thread. */
-                    thread { speakToClient(newClientId) }
-                    listenToClient(reader, newClientId)
+                        /** Spawn communication thread. */
+                        thread { speakToClient(newClientId) }
+
+                        listenToClient(reader, newClientId)
+                    }
 
                 }
             }
@@ -193,9 +203,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         } catch (e: IOException) {
             NodeLogger.logErr("I/O error", e)
         }
-
     }
-
 
     /**
      * Executed in main thread, it takes received messages one by one from
@@ -206,6 +214,11 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
             val m = eventQueue.take()
             NodeLogger.logMsgHandle(m)
             when (m) {
+                is SlotOutMessage -> {
+                    localLeader.handleSlotOut(m)
+                    localAcceptor.handleSlotOut(m)
+                }
+
                 is ReplicaMessage  -> localReplica.receiveMessage(m)
                 is LeaderMessage   -> localLeader.receiveMessage(m)
                 is AcceptorMessage -> localAcceptor.receiveMessage(m)
@@ -248,7 +261,8 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         try {
             dispatch(reader) { parts ->
                 val message = ClientRequest.parse(clientId, parts)
-                receiveClientRequest(message)
+                if (message != null)
+                    receiveClientRequest(message)
             }
         } catch (e: SocketException) {
             NodeLogger.logConn("Lost connection to Client $clientId: $e")

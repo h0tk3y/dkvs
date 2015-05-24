@@ -129,4 +129,12 @@ public class Replica(val id: Int,
         }
         propose()
     }
+
+    /**
+     * [Replica]'s container should call [tick] periodically.
+     */
+    public fun tick() {
+        leaderIds.forEach { send(it, SlotOutMessage(id, slotOut)) }
+    }
+
 }

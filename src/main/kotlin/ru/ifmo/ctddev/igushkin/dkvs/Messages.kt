@@ -8,10 +8,10 @@ import java.util.Random
 /**
  * Messages between [Node]s and Clients.
  *
- * Overriding of [Any.toString] is used to serialize messages into
+ * Overriding of toString is used to serialize messages into
  * string representation and send them.
  */
-public abstract class Message() {
+public trait Message {
     companion object {
         public fun parse(s: String): Message = parse(s.split(' '))
 
@@ -27,6 +27,7 @@ public abstract class Message() {
                 "p2a"      -> PhaseTwoRequest(parts[1].toInt(), AcceptProposal.parse(parts[2..p]))
                 "p1b"      -> PhaseOneResponse.parse(parts)
                 "p2b"      -> PhaseTwoResponse(parts[1].toInt(), Ballot.parse(parts[2]), AcceptProposal.parse(parts[3..p]))
+                "slotOut"  -> SlotOutMessage(parts[1].toInt(), parts[2].toInt())
                 else       -> throw IllegalArgumentException("Unknown message.")
             //for "get", "set", "delete" use ClientRequest.parse(...)
             }
@@ -37,7 +38,7 @@ public abstract class Message() {
 /**
  * Message which is sent first in order to establish connection between [Node]s.
  */
-public class NodeMessage(val fromId: Int) : Message() {
+public class NodeMessage(val fromId: Int) : Message {
     override fun toString() = "node $fromId"
 }
 
@@ -45,14 +46,14 @@ public class NodeMessage(val fromId: Int) : Message() {
  * Request for checking connectivity between [Node]s.
  * [PongMessage] is the right response.
  */
-public class PingMessage() : Message() {
+public class PingMessage() : Message {
     override fun toString() = "ping"
 }
 
 /**
  * Response for [PingMessage] which shows positive connectivity.
  */
-public class PongMessage() : Message() {
+public class PongMessage() : Message {
     override fun toString() = "pong"
 }
 
@@ -61,7 +62,7 @@ public class PongMessage() : Message() {
 /**
  * Sub-hierarchy of messages addressed to [Replica]s.
  */
-public abstract class ReplicaMessage(val fromId: Int) : Message()
+public abstract class ReplicaMessage(val fromId: Int) : Message
 
 public class DecisionMessage(val slot: Int, val request: OperationDescriptor) : ReplicaMessage(-1) {
     override fun toString() = "decision $slot $request"
@@ -79,13 +80,13 @@ public class DecisionMessage(val slot: Int, val request: OperationDescriptor) : 
 public abstract class ClientRequest(clientId: Int) : ReplicaMessage(clientId) {
 
     companion object {
-        public fun parse(clientId: Int, parts: Array<String>): ClientRequest =
+        public fun parse(clientId: Int, parts: Array<String>): ClientRequest? =
                 when (parts[0]) {
                     "get"    -> GetRequest(clientId, parts[1])
                     "set"    -> SetRequest(clientId, parts[1], parts.drop(2).join(" "))
                     "delete" -> DeleteRequest(clientId, parts[1])
                     "ping"   -> PingRequest(clientId)
-                    else     -> throw IllegalArgumentException("Invalid client request ${parts[0]}.")
+                    else     -> { NodeLogger.logErr("Invalid client request: ${parts.join(" ")}"); null }
                 }
     }
 }
@@ -106,8 +107,14 @@ public data class PingRequest(fromId: Int) : ClientRequest(fromId)
 
 //----- Leader messages -----
 
-public abstract class LeaderMessage(val fromId: Int) : Message()
+/**
+ * Sub-hierarchy of messages addressed to [Leader]s.
+ */
+public abstract class LeaderMessage(val fromId: Int) : Message
 
+/**
+ * Sent by [Replica] and contains a proposition of [request] to [slot].
+ */
 public data class ProposeMessage(fromId: Int, val slot: Int, val request: OperationDescriptor) : LeaderMessage(fromId) {
     override fun toString() = "propose $fromId $slot $request"
 }
@@ -139,10 +146,14 @@ public class PhaseOneResponse(fromId: Int,
 val payloadSplitter = " ### "
 
 /**
- * Sent to [Scout] from [Acceptor] in response to [PhaseTwoRequest].
+ * Sent to [Leader] from [Acceptor] in response to [PhaseTwoRequest].
  */
 public class PhaseTwoResponse(fromId: Int, val ballot: Ballot, val proposal: AcceptProposal) : LeaderMessage(fromId) {
     override fun toString() = "p2b $fromId $ballot $proposal"
+}
+
+public class SlotOutMessage(val fromId: Int, val slotOut: Int): Message {
+    override fun toString() = "slotOut $fromId $slotOut"
 }
 
 //----- Acceptor messages -----
@@ -150,10 +161,10 @@ public class PhaseTwoResponse(fromId: Int, val ballot: Ballot, val proposal: Acc
 /**
  * Sub-hierarchy of messages sent to [Acceptor]s.
  */
-public abstract class AcceptorMessage(val fromId: Int, val ballotNum: Ballot) : Message()
+public abstract class AcceptorMessage(val fromId: Int, val ballotNum: Ballot) : Message
 
 /**
- * Sent by [Scout] to [Acceptor].
+ * Sent by [Leader.Scout] to [Acceptor].
  * Normal response is [PhaseOneResponse].
  */
 public class PhaseOneRequest(fromId: Int, ballotNum: Ballot) : AcceptorMessage(fromId, ballotNum) {
@@ -168,30 +179,13 @@ public class PhaseTwoRequest(fromId: Int, val payload: AcceptProposal) : Accepto
     override fun toString() = "p2a $fromId $payload"
 }
 
+//-------------------------------
+
 /**
  * Never received by [Node]s.
- * The only usage is for sending responses to the Clients.s
+ * The only usage is for sending responses to the Clients.
  */
-public class TextMessage(val text: String) : Message() {
+public class TextMessage(val text: String) : Message {
     override fun toString() = text
 }
 
-/**
- * Attaching a unique [operationId] to [ClientRequest]s to distinguish them.
- */
-public data class OperationDescriptor private (val operationId: Int,
-                                          val request: ClientRequest
-) {
-    public constructor(request: ClientRequest, nodeId: Int) : this(
-            nextId * globalConfig.nodesCount + nodeId, request
-    )
-
-    companion object {
-        public fun parse(parts: Array<String>): OperationDescriptor =
-                OperationDescriptor(parts[0].substring(1, parts[0].length()-1).toInt(), ClientRequest.parse(-1, parts[1..parts.lastIndex]));
-
-        private volatile var nextId: Int = 0; get() = $nextId++
-    }
-
-    override fun toString() = "<$operationId> $request"
-}

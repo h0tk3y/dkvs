@@ -1,5 +1,7 @@
 package ru.ifmo.ctddev.igushkin.dkvs
 
+import java.util.HashMap
+
 /**
  * Represents [Acceptor] part of Multi-Paxos protocol.
  *
@@ -8,6 +10,7 @@ package ru.ifmo.ctddev.igushkin.dkvs
 
 public class Acceptor(val id: Int,
                       val send: (leaderId: Int, Message) -> Unit,
+                      val replicaIds: List<Int>,
                       val persistence: Persistence
 
 ) {
@@ -30,6 +33,26 @@ public class Acceptor(val id: Int,
                     accepted[message.payload.slot] = message.payload
                 send(message.fromId, PhaseTwoResponse(id, ballotNumber, message.payload))
             }
+        }
+    }
+
+    private val slotOuts = HashMap(replicaIds.map{ it to 0}.toMap())
+
+    public fun handleSlotOut(message: SlotOutMessage) {
+        val minSlotOut = slotOuts.values().min()
+        val replicaId = message.fromId
+        slotOuts[replicaId] = message.slotOut
+        val newMinSlotOut = slotOuts.values().min()
+        if (newMinSlotOut != minSlotOut) {
+            cleanup()
+        }
+    }
+
+    private fun cleanup() {
+        val slot = slotOuts.values().min()!!
+        NodeLogger.logProtocol("ACCEPTOR CLEANUP to slotOut $slot")
+        for (i in accepted.keySet().filter{ it < slot }) {
+            accepted remove i
         }
     }
 }

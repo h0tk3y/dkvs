@@ -12,18 +12,23 @@ import java.util.logging.Logger
 public open class NodeLogger() {
     private val logger = Logger.getLogger("Node")
 
+    private fun Message.isLoggable() =
+            this !is PingMessage &&
+            this !is PongMessage &&
+            this !is SlotOutMessage
+
     public fun logMsgIn(m: Message, fromId: Int) {
-        if (m !is PingMessage && m !is PongMessage)
+        if (m.isLoggable())
             logger.log(Level.INFO, ">> from $fromId: $m")
     }
 
     public fun logMsgOut(m: Message, toId: Int) {
-        if (m !is PingMessage && m !is PongMessage)
+        if (m.isLoggable())
             logger.log(Level.INFO, "<< to $toId: $m")
     }
 
     public fun logMsgHandle(m: Message) {
-        if (m !is PingMessage && m !is PongMessage)
+        if (m.isLoggable())
             logger.log(Level.INFO, ".. handling: $m")
     }
 
@@ -35,7 +40,7 @@ public open class NodeLogger() {
         logger.log(Level.INFO, "   $s")
     }
 
-    public fun logErr(s: String, t: Throwable?) {
+    public fun logErr(s: String, t: Throwable? = null) {
         logger.log(Level.SEVERE, "!! $s", t)
     }
 

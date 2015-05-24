@@ -5,7 +5,10 @@ import java.util.HashSet
 import kotlin.test.todo
 
 /**
- * Created by Sergey on 21.05.2015.
+ * Represents `replica` of Multi-Paxos protocol.
+ *
+ * For complete description, see [Paxos Made Moderately Complex]
+ * [http://www.cs.cornell.edu/courses/cs7412/2011sp/paxos.pdf]
  */
 
 public class Leader(val id: Int,
@@ -25,7 +28,6 @@ public class Leader(val id: Int,
         scouting(currentBallot)
     }
 
-    //todo Garbage collection haven't been implemented yet
     private val proposals = HashMap<Int, OperationDescriptor>()
 
     public fun receiveMessage(message: LeaderMessage) {
@@ -98,6 +100,26 @@ public class Leader(val id: Int,
                     commanders remove proposal
                 }
             }
+        }
+    }
+
+    private val slotOuts = HashMap(replicaIds.map{ it to 0}.toMap())
+
+    public fun handleSlotOut(message: SlotOutMessage) {
+        val minSlotOut = slotOuts.values().min()
+        val replicaId = message.fromId
+        slotOuts[replicaId] = message.slotOut
+        val newMinSlotOut = slotOuts.values().min()
+        if (newMinSlotOut != minSlotOut) {
+            cleanup()
+        }
+    }
+
+    private fun cleanup() {
+        val slot = slotOuts.values().min()!!
+        NodeLogger.logProtocol("LEADER CLEANUP to slotOut $slot")
+        for (i in proposals.keySet().filter{ it < slot }) {
+            proposals remove i
         }
     }
 
