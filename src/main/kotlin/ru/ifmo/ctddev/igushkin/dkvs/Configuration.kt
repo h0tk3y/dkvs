@@ -20,7 +20,7 @@ public data class Configuration(val addresses: Map<Int, String>,
         return parts[1].toInt()
     }
 
-    public fun address(id: Int): String? {
+    public fun address(id: Int): String {
         if (id !in addresses)
             throw IllegalArgumentException("ID out of configuration.")
         val parts = addresses[id]!!.split(":")
@@ -32,31 +32,33 @@ public data class Configuration(val addresses: Map<Int, String>,
 
     public val ids: List<Int>
         get() = (1..nodesCount).toList()
-}
 
-val globalConfig by Delegates.lazy { readDkvsProperties() }
-val CHARSET = "UTF-8"
+    companion object {
+        public fun readDkvsProperties(filename: String = "dkvs.properties"): Configuration {
 
-public fun readDkvsProperties(): Configuration {
+            val NODE_ADDRESS_PREFIX = "node"
 
-    val CONFIG_PROPERTIES_NAME = "dkvs.properties"
-    val NODE_ADDRESS_PREFIX = "node"
+            val input = javaClass<Configuration>().getClassLoader().getResourceAsStream(filename)
+            val props = Properties()
+            props.load(input)
 
-    val input = javaClass<Configuration>().getClassLoader().getResourceAsStream(CONFIG_PROPERTIES_NAME)
-    val props = Properties()
-    props.load(input)
+            val timeout = (props["timeout"] as String).toLong()
+            val addresses = hashMapOf<Int, String>()
+            for ((k, v) in props.entrySet()) {
+                if (k !is String || v !is String)
+                    continue
+                if (k.startsWith(NODE_ADDRESS_PREFIX)) {
+                    val parts = k.split("\\.")
+                    val id = parts[1].toInt()
+                    addresses[id] = v
+                }
+            }
 
-    val timeout = (props["timeout"] as String).toLong()
-    val addresses = hashMapOf<Int, String>()
-    for ((k, v) in props.entrySet()) {
-        if (k !is String || v !is String)
-            continue
-        if (k.startsWith(NODE_ADDRESS_PREFIX)) {
-            val parts = k.split("\\.")
-            val id = parts[1].toInt()
-            addresses[id] = v
+            return Configuration(Collections.unmodifiableMap(addresses), timeout)
         }
-    }
 
-    return Configuration(Collections.unmodifiableMap(addresses), timeout)
+        public val charset: String = "UTF-8"
+    }
 }
+
+public var globalConfig: Configuration = Configuration.readDkvsProperties();

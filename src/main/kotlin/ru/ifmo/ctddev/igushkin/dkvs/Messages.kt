@@ -28,7 +28,7 @@ public trait Message {
                 "p2b"      -> PhaseTwoResponse(parts[1].toInt(), Ballot.parse(parts[2]), AcceptProposal.parse(parts[3..p]))
                 "slotOut"  -> SlotOutMessage(parts[1].toInt(), parts[2].toInt())
                 else       -> throw IllegalArgumentException("Unknown message.")
-            //for "get", "set", "delete" use ClientRequest.parse(...)
+                //for "get", "set", "delete" use ClientRequest.parse(...)
             }
         }
     }
@@ -85,6 +85,7 @@ public abstract class ClientRequest(clientId: Int) : ReplicaMessage(clientId) {
                     "set"    -> SetRequest(clientId, parts[1], parts.drop(2).join(" "))
                     "delete" -> DeleteRequest(clientId, parts[1])
                     "ping"   -> PingRequest(clientId)
+                    "sleep"  -> { Thread.sleep(parts[1].toLong()); SleepRequest(clientId, parts[1].toLong()) }
                     else     -> { NodeLogger.logErr("Invalid client request: ${parts.join(" ")}"); null }
                 }
     }
@@ -103,6 +104,11 @@ public data class DeleteRequest(fromId: Int, val key: String) : ClientRequest(fr
 }
 
 public data class PingRequest(fromId: Int) : ClientRequest(fromId)
+
+/**
+ * FOR TESTS ONLY
+ */
+public data class SleepRequest(fromId: Int, val millis: Long) : ClientRequest(fromId)
 
 //----- Leader messages -----
 
@@ -142,7 +148,7 @@ public class PhaseOneResponse(val fromId: Int,
     }
 }
 
-val payloadSplitter = " ### "
+public val payloadSplitter: String = " ### "
 
 /**
  * Sent to [Leader] from [Acceptor] in response to [PhaseTwoRequest].

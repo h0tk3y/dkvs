@@ -41,7 +41,7 @@ public class Replica(val id: Int,
 
     private val state: MutableMap<String, String> = persistence.keyValueStorage!!
 
-    public volatile var slotOut: Int = persistence.lastSlotOut+1; private set
+    public volatile var slotOut: Int = persistence.lastSlotOut + 1; private set
     public volatile var slotIn: Int = slotOut; private set
 
     private val awaitingClients = HashMap<OperationDescriptor, Int>()
@@ -105,6 +105,7 @@ public class Replica(val id: Int,
                                  "VALUE ${message.key} ${state[message.key]}" else
                                  "NOT_FOUND")
             }
+            is SleepRequest    -> {} // TESTS ONLY
             is ClientRequest   -> {
                 val op = OperationDescriptor(message, id)
                 requests add op

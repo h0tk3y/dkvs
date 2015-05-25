@@ -172,7 +172,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
      * and switches to [listenToNode] or [listenToClient]
      */
     private fun handleRequest(client: Socket) {
-        val reader = client.getInputStream().reader(CHARSET).buffered()
+        val reader = client.getInputStream().reader(Configuration.charset).buffered()
         try {
             val l = reader.readLine()
             val parts = l.split(' ')
@@ -287,11 +287,6 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         val address = globalConfig.address(nodeId)
         val port = globalConfig.port(nodeId)
 
-        if (address == null) {
-            println("Couldn't get address for $nodeId, closing.")
-            return
-        }
-
         while (!stopping) {
             try {
                 node.resetOutput()
@@ -299,7 +294,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
                 socket.connect(InetSocketAddress(address, port))
                 NodeLogger.logConn("Connected to node $nodeId.")
                 sendFirst(nodeId, NodeMessage(id))
-                val writer = socket.getOutputStream().writer(CHARSET)
+                val writer = socket.getOutputStream().writer(Configuration.charset)
 
                 nodes[nodeId].setReady()
 

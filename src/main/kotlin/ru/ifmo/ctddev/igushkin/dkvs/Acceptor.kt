@@ -32,6 +32,8 @@ public class Acceptor(val id: Int,
                 send(message.fromId, PhaseOneResponse(id, message.ballotNum, ballotNumber, accepted.values()))
             }
             is PhaseTwoRequest -> {
+                if (message.payload.ballotNum > ballotNumber)
+                    ballotNumber = message.payload.ballotNum
                 if (message.payload.ballotNum == ballotNumber)
                     accepted[message.payload.slot] = message.payload
                 send(message.fromId, PhaseTwoResponse(id, ballotNumber, message.payload))

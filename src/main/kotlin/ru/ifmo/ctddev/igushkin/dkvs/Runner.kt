@@ -10,7 +10,7 @@ import kotlin.platform.platformStatic
  */
 
 object Runner {
-    platformStatic fun main(args: Array<String>) {
+    platformStatic public fun main(args: Array<String>) {
         if (args.size() == 0)
             for (i in globalConfig.ids) {
                 thread { Node(i).run() }
