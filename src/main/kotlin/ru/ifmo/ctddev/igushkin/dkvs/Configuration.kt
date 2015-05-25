@@ -15,14 +15,14 @@ public data class Configuration(val addresses: Map<Int, String>,
 ) {
     public fun port(id: Int): Int {
         if (id !in addresses)
-            return -1
+            throw IllegalArgumentException("ID out of configuration.")
         val parts = addresses[id]!!.split(":")
         return parts[1].toInt()
     }
 
     public fun address(id: Int): String? {
         if (id !in addresses)
-            return null
+            throw IllegalArgumentException("ID out of configuration.")
         val parts = addresses[id]!!.split(":")
         return parts[0]
     }
