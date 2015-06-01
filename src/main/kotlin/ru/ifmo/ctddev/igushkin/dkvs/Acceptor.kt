@@ -17,7 +17,7 @@ public class Acceptor(val id: Int,
                       val persistence: Persistence
 
 ) {
-    private volatile var ballotNumber = Ballot(persistence.lastBallotNum, globalConfig.ids.first())
+    private volatile var ballotNumber = Ballot(persistence.lastBallotNum, GLOBAL_CONFIG.ids.first())
 
     /** Slot -> most recent AcceptProposal */
     private val accepted = hashMapOf<Int, AcceptProposal>()
@@ -70,7 +70,7 @@ public data class AcceptProposal(val ballotNum: Ballot, val slot: Int, val comma
     override fun toString(): String = "$ballotNum $slot $command"
 
     companion object {
-        public fun parse(parts: Array<String>): AcceptProposal =
+        public fun parse(parts: List<String>): AcceptProposal =
                 AcceptProposal(Ballot.parse(parts[0]), parts[1].toInt(), OperationDescriptor.parse(parts[2..parts.lastIndex]))
     }
 }

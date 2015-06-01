@@ -1,14 +1,10 @@
 package ru.ifmo.ctddev.igushkin.dkvs
 
 import java.io.BufferedReader
-import java.io.File
-import java.io.FileWriter
 import java.io.IOException
 import java.net.*
 import java.util.HashMap
 import java.util.concurrent.LinkedBlockingDeque
-import java.util.logging.Level
-import java.util.logging.Logger
 import kotlin.concurrent.thread
 import kotlin.concurrent.timer
 import kotlin.properties.Delegates
@@ -24,19 +20,35 @@ import kotlin.properties.Delegates
  */
 public class Node(val id: Int) : Runnable, AutoCloseable {
 
-    private val serverSocket = ServerSocket(globalConfig.port(id))
+    private val serverSocket = ServerSocket(GLOBAL_CONFIG.port(id))
 
     private volatile var started = false
     private volatile var stopping = false
 
     private val sender = { to: Int, m: Message -> send(to, m); }
     private val clientSender = { to: Int, s: String -> sendToClient(to, s) }
-    private val allIds = globalConfig.ids
+    private val allIds = GLOBAL_CONFIG.ids
 
     private val persistence = Persistence(id)
     private val localReplica = Replica(id, sender, clientSender, allIds, persistence)
     private val localLeader = Leader(id, sender, allIds, allIds, persistence)
     private val localAcceptor = Acceptor(id, sender, allIds, persistence)
+
+    /**
+     * Suspends messages handling for [ms] millis.
+     * For tests onlu. Should never be used in production.
+     *
+     * refactor Inherit Node in tests, do it there.
+     */
+    public fun sleep(ms: Long) {
+        thread {
+            mainThread.suspend()
+            Thread.sleep(ms)
+            mainThread.resume()
+        }
+    }
+
+    var mainThread: Thread by Delegates.notNull()
 
     override public fun run() {
 
@@ -45,12 +57,12 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
 
         started = true
 
-        for (i in 1..globalConfig.nodesCount)
+        for (i in 1..GLOBAL_CONFIG.nodesCount)
             if (i != id)
             /** Spawn communication thread. */
                 thread { speakToNode(i) }
 
-        thread {
+        mainThread = thread {
             handleMessages()
         }
 
@@ -104,11 +116,11 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
         volatile var aliveOut = false
     }
 
-    private val nodes = HashMap(globalConfig.ids.map { it to ConnectionEntry() }.toMap())
+    private val nodes = HashMap(GLOBAL_CONFIG.ids.map { it to ConnectionEntry() }.toMap())
     private val clients = sortedMapOf<Int, ConnectionEntry>()
 
     private fun pingIfIdle() {
-        timer(period = globalConfig.timeout / 4) {
+        timer(period = GLOBAL_CONFIG.timeout / 4) {
             nodes.entrySet().filter {
                 it.key != id &&
                 it.value.ready
@@ -125,7 +137,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private fun monitorFaults() {
         val faultyNodes = hashSetOf<Int>()
 
-        timer(period = globalConfig.timeout) {
+        timer(period = GLOBAL_CONFIG.timeout) {
             faultyNodes.clear()
 
             nodes.entrySet().filter { it.key != id } forEach { p ->
@@ -144,7 +156,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     }
 
     private fun tickReplica() {
-        timer(period = globalConfig.timeout) {
+        timer(period = GLOBAL_CONFIG.timeout) {
             localReplica.tick()
         }
     }
@@ -172,7 +184,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
      * and switches to [listenToNode] or [listenToClient]
      */
     private fun handleRequest(client: Socket) {
-        val reader = client.getInputStream().reader(Configuration.charset).buffered()
+        val reader = client.getInputStream().reader(CHARSET).buffered()
         try {
             val l = reader.readLine()
             val parts = l.split(' ')
@@ -284,8 +296,8 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
     private fun speakToNode(nodeId: Int) {
         val node = nodes[nodeId]
 
-        val address = globalConfig.address(nodeId)
-        val port = globalConfig.port(nodeId)
+        val address = GLOBAL_CONFIG.address(nodeId)
+        val port = GLOBAL_CONFIG.port(nodeId)
 
         while (!stopping) {
             try {
@@ -294,7 +306,7 @@ public class Node(val id: Int) : Runnable, AutoCloseable {
                 socket.connect(InetSocketAddress(address, port))
                 NodeLogger.logConn("Connected to node $nodeId.")
                 sendFirst(nodeId, NodeMessage(id))
-                val writer = socket.getOutputStream().writer(Configuration.charset)
+                val writer = socket.getOutputStream().writer(CHARSET)
 
                 nodes[nodeId].setReady()
 

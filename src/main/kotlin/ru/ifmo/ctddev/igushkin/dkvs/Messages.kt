@@ -1,7 +1,5 @@
 package ru.ifmo.ctddev.igushkin.dkvs
 
-import java.util.HashSet
-import java.util.LinkedHashMap
 import java.util.LinkedHashSet
 
 /**
@@ -10,11 +8,11 @@ import java.util.LinkedHashSet
  * Overriding of toString is used to serialize messages into
  * string representation and send them.
  */
-public trait Message {
+public interface Message {
     companion object {
         public fun parse(s: String): Message = parse(s.split(' '))
 
-        public fun parse(parts: Array<String>): Message {
+        public fun parse(parts: List<String>): Message {
             val p = parts.lastIndex;
             return when (parts[0]) {
                 "node"     -> NodeMessage(parts[1].toInt())
@@ -33,6 +31,8 @@ public trait Message {
         }
     }
 }
+
+//region Node messages
 
 /**
  * Message which is sent first in order to establish connection between [Node]s.
@@ -56,7 +56,9 @@ public class PongMessage() : Message {
     override fun toString() = "pong"
 }
 
-//----- Replica messages -----
+//endregion Node messages
+
+//region Client requests
 
 /**
  * Sub-hierarchy of messages addressed to [Replica]s.
@@ -79,13 +81,12 @@ public class DecisionMessage(val slot: Int, val request: OperationDescriptor) : 
 public abstract class ClientRequest(clientId: Int) : ReplicaMessage(clientId) {
 
     companion object {
-        public fun parse(clientId: Int, parts: Array<String>): ClientRequest? =
+        public fun parse(clientId: Int, parts: List<String>): ClientRequest? =
                 when (parts[0]) {
                     "get"    -> GetRequest(clientId, parts[1])
                     "set"    -> SetRequest(clientId, parts[1], parts.drop(2).join(" "))
                     "delete" -> DeleteRequest(clientId, parts[1])
                     "ping"   -> PingRequest(clientId)
-                    "sleep"  -> { Thread.sleep(parts[1].toLong()); SleepRequest(clientId, parts[1].toLong()) }
                     else     -> { NodeLogger.logErr("Invalid client request: ${parts.join(" ")}"); null }
                 }
     }
@@ -105,17 +106,13 @@ public data class DeleteRequest(fromId: Int, val key: String) : ClientRequest(fr
 
 public data class PingRequest(fromId: Int) : ClientRequest(fromId)
 
-/**
- * FOR TESTS ONLY
- */
-public data class SleepRequest(fromId: Int, val millis: Long) : ClientRequest(fromId)
+//endregion Client requests
 
-//----- Leader messages -----
-
+//region Leader messages
 /**
  * Sub-hierarchy of messages addressed to [Leader]s.
  */
-public trait LeaderMessage : Message
+public interface LeaderMessage : Message
 
 /**
  * Sent by [Replica] and contains a proposition of [request] to [slot].
@@ -123,6 +120,8 @@ public trait LeaderMessage : Message
 public data class ProposeMessage(val fromId: Int, val slot: Int, val request: OperationDescriptor) : LeaderMessage {
     override fun toString() = "propose $fromId $slot $request"
 }
+
+public val payloadSplitter: String = " ### "
 
 /**
  * Sent to [Leader.Scout] from [Acceptor] in response to [PhaseOneRequest].
@@ -134,12 +133,12 @@ public class PhaseOneResponse(val fromId: Int,
     override fun toString() = "p1b $fromId $originalBallot $ballotNum ${pvalues.joinToString(payloadSplitter)}"
 
     companion object {
-        fun parse(parts: Array<String>): PhaseOneResponse {
+        fun parse(parts: List<String>): PhaseOneResponse {
             if (parts[0] != "p1b") throw IllegalArgumentException("PhaseOneResponse should start by \"p1b\"")
             val fromId = parts[1].toInt()
             val originalBallot = Ballot.parse(parts[2])
             val ballotNum = Ballot.parse(parts[3])
-            val pvalues = parts[4..parts.lastIndex].join(" ").split("$payloadSplitter")
+            val pvalues = parts[4..parts.lastIndex].join(" ").splitBy("$payloadSplitter")
                     .filter { it.length() > 0 }
                     .map { it.split(' ') }
                     .map { AcceptProposal.parse(it) }
@@ -148,8 +147,6 @@ public class PhaseOneResponse(val fromId: Int,
     }
 }
 
-public val payloadSplitter: String = " ### "
-
 /**
  * Sent to [Leader] from [Acceptor] in response to [PhaseTwoRequest].
  */
@@ -157,12 +154,13 @@ public class PhaseTwoResponse(val fromId: Int, val ballot: Ballot, val proposal:
     override fun toString() = "p2b $fromId $ballot $proposal"
 }
 
-//----- Acceptor messages -----
+//endregion Leader messages
 
+//region Acceptor messages
 /**
  * Sub-hierarchy of messages sent to [Acceptor]s.
  */
-public trait AcceptorMessage : Message
+public interface AcceptorMessage : Message
 
 /**
  * Sent by [Leader.Scout] to [Acceptor].
@@ -179,8 +177,9 @@ public class PhaseOneRequest(val fromId: Int, val ballotNum: Ballot) : AcceptorM
 public class PhaseTwoRequest(val fromId: Int, val payload: AcceptProposal) : AcceptorMessage {
     override fun toString() = "p2a $fromId $payload"
 }
+//endregion Acceptor messages
 
-//-------------------------------
+//region Garbage collection
 
 /**
  * Sent by [Replica]s to inform [Leader]s and [Acceptor]s of its [Replica.slotOut],
@@ -190,7 +189,7 @@ public class SlotOutMessage(val fromId: Int, val slotOut: Int): LeaderMessage, A
     override fun toString() = "slotOut $fromId $slotOut"
 }
 
-//-------------------------------
+//endregion Garbage collection
 
 /**
  * Never received by [Node]s.

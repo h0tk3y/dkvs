@@ -1,12 +1,7 @@
 package ru.ifmo.ctddev.igushkin.dkvs
 
-import java.io.File
-import java.io.FileWriter
-import java.util.ArrayList
 import java.util.HashMap
 import java.util.HashSet
-import java.util.Random
-import kotlin.util.measureTimeMillis
 
 /**
  * Represents Replica of Multi-Paxos protocol.
@@ -105,7 +100,6 @@ public class Replica(val id: Int,
                                  "VALUE ${message.key} ${state[message.key]}" else
                                  "NOT_FOUND")
             }
-            is SleepRequest    -> {} // TESTS ONLY
             is ClientRequest   -> {
                 val op = OperationDescriptor(message, id)
                 requests add op
@@ -139,5 +133,4 @@ public class Replica(val id: Int,
     public fun tick() {
         leaderIds.forEach { send(it, SlotOutMessage(id, slotOut)) }
     }
-
 }

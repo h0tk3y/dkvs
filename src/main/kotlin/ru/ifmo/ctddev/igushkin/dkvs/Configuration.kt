@@ -2,28 +2,27 @@ package ru.ifmo.ctddev.igushkin.dkvs
 
 import java.util.Collections
 import java.util.Properties
-import kotlin.properties.Delegates
 
 /**
  * Stores nodes configuration which consists of:
- * addresses: mapping of node ids to network addresses on which the nodes can be found
- * timeout: idleness limit for nodes communication
+ * @property addresses mapping of node ids to network addresses on which the nodes can be found
+ * @property timeout idleness limit for nodes communication
  */
 
 public data class Configuration(val addresses: Map<Int, String>,
-                         val timeout: Long
+                                val timeout: Long
 ) {
     public fun port(id: Int): Int {
         if (id !in addresses)
             throw IllegalArgumentException("ID out of configuration.")
-        val parts = addresses[id]!!.split(":")
+        val parts = addresses[id]!!.splitBy(":")
         return parts[1].toInt()
     }
 
     public fun address(id: Int): String {
         if (id !in addresses)
             throw IllegalArgumentException("ID out of configuration.")
-        val parts = addresses[id]!!.split(":")
+        val parts = addresses[id]!!.splitBy(":")
         return parts[0]
     }
 
@@ -48,7 +47,7 @@ public data class Configuration(val addresses: Map<Int, String>,
                 if (k !is String || v !is String)
                     continue
                 if (k.startsWith(NODE_ADDRESS_PREFIX)) {
-                    val parts = k.split("\\.")
+                    val parts = k.splitBy(".")
                     val id = parts[1].toInt()
                     addresses[id] = v
                 }
@@ -56,9 +55,9 @@ public data class Configuration(val addresses: Map<Int, String>,
 
             return Configuration(Collections.unmodifiableMap(addresses), timeout)
         }
-
-        public val charset: String = "UTF-8"
     }
 }
 
-public var globalConfig: Configuration = Configuration.readDkvsProperties();
+public val GLOBAL_CONFIG: Configuration = Configuration.readDkvsProperties();
+
+public val CHARSET: String = "UTF-8"

@@ -1,20 +1,22 @@
-package ru.ifmo.ctddev.igushkin.dkvs
+package ru.ifmo.ctddev.igushkin.dkvs.test
 
+import ru.ifmo.ctddev.igushkin.dkvs.CHARSET
 import java.io.BufferedReader
 import java.io.OutputStreamWriter
-import java.io.PrintWriter
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketException
 import kotlin.properties.Delegates
 
 /**
+ * Simple wrapper which connects to DKVS node and performs requests.
+ *
  * Created by Sergey on 25.05.2015.
  */
 
-val timeout = 10000
+val SOCKET_TIMEOUT = 10000
 
-public class Client(val address: String, val port: Int) {
+public open class Client(val address: String, val port: Int) {
 
     private var socket: Socket by Delegates.notNull()
     private var reader: BufferedReader by Delegates.notNull()
@@ -22,27 +24,27 @@ public class Client(val address: String, val port: Int) {
 
     private val endpoint = InetSocketAddress(address, port)
 
-    public synchronized fun connect() {
+    public open synchronized fun connect() {
         socket = Socket()
-        socket.setSoTimeout(timeout)
+        socket.setSoTimeout(SOCKET_TIMEOUT)
         socket.connect(endpoint)
-        reader = socket.getInputStream().reader(Configuration.charset).buffered()
-        writer = socket.getOutputStream().writer(Configuration.charset)
+        reader = socket.getInputStream().reader(CHARSET).buffered()
+        writer = socket.getOutputStream().writer(CHARSET)
     }
 
-    public synchronized fun disconnect() {
+    public open synchronized fun disconnect() {
         socket.close()
         socket = Socket()
     }
 
-    public synchronized fun get(key: String): String? {
+    public open synchronized fun get(key: String): String? {
         try {
             writer.write("get $key\n")
             writer.flush()
             val responseParts = reader.readLine().split(' ')
             return when (responseParts[0]) {
                 "NOT_FOUND" -> null
-                "VALUE"     -> responseParts.copyOfRange(2, responseParts.size()).join(" ")
+                "VALUE"     -> responseParts.subList(2, responseParts.size()).join(" ")
                 else        -> throw RuntimeException("Incorrect response: ${responseParts.join(" ")}");
             }
         } catch (e: SocketException) {
@@ -50,7 +52,7 @@ public class Client(val address: String, val port: Int) {
         }
     }
 
-    public synchronized fun set(key: String, value: String): Boolean {
+    public open synchronized fun set(key: String, value: String): Boolean {
         try {
             writer.write("set $key $value\n")
             writer.flush()
@@ -61,7 +63,7 @@ public class Client(val address: String, val port: Int) {
         }
     }
 
-    public synchronized fun delete(key: String, value: String): Boolean {
+    public open synchronized fun delete(key: String, value: String): Boolean {
         try {
             writer.write("delete $key\n")
             writer.flush()
@@ -71,13 +73,4 @@ public class Client(val address: String, val port: Int) {
             return false
         }
     }
-
-    public synchronized fun sleep() {
-        try {
-            writer.write("sleep 8000\n")
-            writer.flush()
-        } catch (e: SocketException) {
-        }
-    }
-
 }

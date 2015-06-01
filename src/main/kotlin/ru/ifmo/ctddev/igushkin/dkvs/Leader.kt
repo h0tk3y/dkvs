@@ -2,7 +2,6 @@ package ru.ifmo.ctddev.igushkin.dkvs
 
 import java.util.HashMap
 import java.util.HashSet
-import kotlin.test.todo
 
 /**
  * Represents Leader of Multi-Paxos protocol.
@@ -24,7 +23,7 @@ public class Leader(val id: Int,
         private set
 
     /**
-     * Should be called by a [Leader]'s container, when everything else is ready.
+     * Should be called by the [Leader]'s container after init and when the leader is able to start working.
      */
     public fun afterRun() {
         scouting(currentBallot)
@@ -84,23 +83,14 @@ public class Leader(val id: Int,
         NodeLogger.logProtocol("ADOPTED with ballot $ballot")
         for ((slot, pval) in pvalues) {
             proposals[slot] = pval.command
-        }
+        } 
         active = true
         for ((s, c) in proposals) {
             command(AcceptProposal(ballot, s, c))
         }
     }
 
-    private fun cleanup() {
-        val slot = slotOuts.values().min()!!
-        NodeLogger.logProtocol("LEADER CLEANUP to slotOut $slot")
-        for (i in proposals.keySet().filter { it < slot }) {
-            proposals remove i
-        }
-    }
-
-    //----- Commander -----
-
+    //region Commander
     inner class Commander(val proposal: AcceptProposal) {
         val waitFor = HashSet(acceptorIds)
 
@@ -130,9 +120,9 @@ public class Leader(val id: Int,
         commanders[proposal] = Commander(proposal)
         acceptorIds.forEach { send(it, PhaseTwoRequest(id, proposal)) }
     }
+    //endregion Commander
 
-    //------ Scout ------
-
+    //region Scout
     inner class Scout(val b: Ballot) {
         val waitFor = HashSet(acceptorIds)
         val proposals = hashMapOf<Int, AcceptProposal>()
@@ -161,14 +151,25 @@ public class Leader(val id: Int,
         scouts[ballot] = Scout(currentBallot)
         acceptorIds.forEach { send(it, PhaseOneRequest(id, ballot)) }
     }
+    //endregion Scout
 
-    //------ Fault detection -------
-
+    //region Fault detection
     private volatile var onFault: ((HashSet<Int>) -> Unit)? = null
 
     public fun notifyFault(nodes: HashSet<Int>) {
         onFault?.invoke(nodes)
     }
+    //endregion Fault detection
+
+    //region Garbage collection
+    private fun cleanup() {
+        val slot = slotOuts.values().min()!!
+        NodeLogger.logProtocol("LEADER CLEANUP to slotOut $slot")
+        for (i in proposals.keySet().filter { it < slot }) {
+            proposals remove i
+        }
+    }
+    //endregion Garbage collection
 }
 
 public data class Ballot(val ballotNum: Int, val leaderId: Int) : Comparable<Ballot> {
